@@ -57,7 +57,13 @@ class MonitorTests(unittest.TestCase):
                 profile="server",
                 scope="system",
             )
-        timer = plan["files"]["/etc/systemd/system/netops-monitor.timer"]
+        timer = next(
+            content
+            for path, content in plan["files"].items()
+            if path.replace("\\", "/").endswith(
+                "/etc/systemd/system/netops-monitor.timer"
+            )
+        )
         self.assertIn("OnUnitActiveSec=60s", timer)
         self.assertEqual(plan["config"]["retention_days"], 7)
         self.assertEqual(plan["config"]["max_bytes"], 200 * 1024 * 1024)

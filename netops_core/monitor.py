@@ -26,6 +26,11 @@ DEFAULTS = {
 }
 
 
+def _current_uid() -> int:
+    getter = getattr(os, "getuid", None)
+    return int(getter()) if getter is not None else 0
+
+
 def _monitor_paths(scope: str) -> dict[str, Path]:
     current = platform_id()
     home = Path.home()
@@ -169,7 +174,7 @@ def build_install_plan(
             "StandardErrorPath": str(paths["state"] / "scheduler.err.log"),
         }
         files[str(paths["plist"])] = plistlib.dumps(plist)
-        domain = f"gui/{os.getuid()}"
+        domain = f"gui/{_current_uid()}"
         commands.extend(
             [
                 ["launchctl", "bootout", domain, str(paths["plist"])],
@@ -297,7 +302,7 @@ def monitor_status(*, scope: str) -> dict[str, Any]:
             [
                 "launchctl",
                 "print",
-                f"gui/{os.getuid()}/io.github.con-benksl.netops-monitor",
+                f"gui/{_current_uid()}/io.github.con-benksl.netops-monitor",
             ],
             timeout=10,
         )
@@ -327,7 +332,7 @@ def remove_monitor(*, scope: str, authorized: bool, dry_run: bool) -> dict[str, 
             [
                 "launchctl",
                 "bootout",
-                f"gui/{os.getuid()}",
+                f"gui/{_current_uid()}",
                 str(paths["plist"]),
             ]
         ]
