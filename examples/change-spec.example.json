@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "name": "replace validated service configuration",
+  "summary": "Deploy one prepared configuration while preserving unrelated services and the default route.",
+  "host_alias": "edge-a",
+  "invariants": [
+    "SSH remains reachable",
+    "The host default route is unchanged",
+    "Existing unrelated listeners remain available"
+  ],
+  "backup_paths": [
+    "/etc/example/service.json"
+  ],
+  "backup_root": "/var/backups/netops",
+  "payloads": [
+    {
+      "local_path": "payload/service.json",
+      "remote_path": "/etc/example/service.json",
+      "mode": "0640"
+    }
+  ],
+  "operations": [
+    {
+      "phase": "preflight",
+      "description": "Confirm the target file and service exist",
+      "command": "test -f /etc/example/service.json && systemctl cat example.service >/dev/null"
+    },
+    {
+      "phase": "validate",
+      "description": "Validate the prepared configuration",
+      "command": "/usr/local/bin/example-service check /etc/example/service.json"
+    },
+    {
+      "phase": "verify",
+      "description": "Verify the service is active after restart",
+      "command": "systemctl is-active --quiet example.service"
+    },
+    {
+      "phase": "rollback_verify",
+      "description": "Verify the restored service is active",
+      "command": "systemctl is-active --quiet example.service"
+    }
+  ],
+  "restart_services": [
+    "example.service"
+  ]
+}

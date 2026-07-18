@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetOps · 环境与链路扫描"
+  short_description: "扫描客户端、VPS、节点路径并生成可解释证据"
+  default_prompt: "用 $netops-scan 扫描当前环境和可观测链路，先不要修改配置。"

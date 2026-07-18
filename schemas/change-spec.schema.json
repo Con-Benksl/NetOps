@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Con-Benksl/NetOps/schemas/change-spec.schema.json",
+  "title": "NetOps Controlled Change Specification",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "name",
+    "summary",
+    "host_alias",
+    "invariants",
+    "backup_paths",
+    "operations"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "name": {"type": "string", "minLength": 1},
+    "summary": {"type": "string", "minLength": 1},
+    "host_alias": {"type": "string", "minLength": 1},
+    "invariants": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "backup_paths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "pattern": "^/"}
+    },
+    "backup_root": {"type": "string", "pattern": "^/"},
+    "payloads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["local_path", "remote_path"],
+        "properties": {
+          "local_path": {"type": "string"},
+          "remote_path": {"type": "string", "pattern": "^/"},
+          "mode": {"type": "string", "pattern": "^0?[0-7]{3,4}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["phase", "description", "command"],
+        "properties": {
+          "phase": {
+            "enum": [
+              "preflight",
+              "apply",
+              "validate",
+              "verify",
+              "rollback",
+              "rollback_verify"
+            ]
+          },
+          "description": {"type": "string", "minLength": 1},
+          "command": {"type": "string", "minLength": 1},
+          "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+        },
+        "additionalProperties": false
+      }
+    },
+    "restart_services": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9_.@-]+$"}
+    }
+  },
+  "additionalProperties": false
+}

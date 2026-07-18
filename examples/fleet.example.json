@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "fleet_name": "example-fleet",
+  "hosts": [
+    {
+      "alias": "edge-a",
+      "role": "regional proxy edge",
+      "management": {
+        "address": "192.0.2.10",
+        "panel_reference": "https://panel.example.invalid"
+      },
+      "ssh": {
+        "user": "root",
+        "port": 22,
+        "config_host": null,
+        "identity_file": "~/.ssh/example_ed25519",
+        "credential_reference": "~/private-notes/edge-a.txt",
+        "password_env": null
+      },
+      "domains": {
+        "ipv4": ["edge4.example.invalid"],
+        "ipv6": ["edge6.example.invalid"],
+        "panel": ["panel.example.invalid"]
+      },
+      "expected_services": ["ssh", "x-ui"],
+      "labels": {
+        "provider": "example",
+        "region": "example-region"
+      }
+    }
+  ]
+}

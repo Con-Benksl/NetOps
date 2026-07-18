@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetOps"
+  short_description: "面向小白的 VPS 网络扫描、节点搭建、故障诊断与长期运维"
+  default_prompt: "用 $netops 先识别我的环境，再帮我处理 VPS 网络或代理节点问题。"

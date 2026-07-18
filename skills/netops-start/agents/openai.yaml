@@ -1,0 +1,4 @@
+interface:
+  display_name: "NetOps · 新手引导"
+  short_description: "用通俗语言确定目标并进入正确流程"
+  default_prompt: "用 $netops-start 帮我从零理解并开始处理这台 VPS。"
