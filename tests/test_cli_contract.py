@@ -392,14 +392,16 @@ class CliContractTests(unittest.TestCase):
             self.assertFalse((root / "rollback.receipt.json").exists())
 
     def test_installed_entry_point_is_resolved_independently_of_cwd(self):
-        with patch.object(
-            cli, "__file__", "/tmp/site-packages/netops_core/cli.py"
-        ), patch.object(cli.sys, "argv", ["netopsctl"]), patch.object(
-            cli.shutil, "which", return_value="/opt/netops/bin/netopsctl"
-        ):
-            self.assertEqual(
-                cli._entry_script(), Path("/opt/netops/bin/netopsctl")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / "bin" / (
+                "netopsctl.exe" if os.name == "nt" else "netopsctl"
             )
+            module_file = root / "site-packages" / "netops_core" / "cli.py"
+            with patch.object(cli, "__file__", str(module_file)), patch.object(
+                cli.sys, "argv", ["netopsctl"]
+            ), patch.object(cli.shutil, "which", return_value=str(installed)):
+                self.assertEqual(cli._entry_script(), installed.resolve())
 
     @patch(
         "netops_core.cli.execute",

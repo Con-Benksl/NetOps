@@ -36,6 +36,22 @@ BACKUP_INTEGRITY_STDOUT = (
     f"archive_sha256={'c' * 64}\nmanifest_sha256={'d' * 64}\n"
 )
 
+ARCHIVE_VALIDATION_TOOLS = (
+    "awk",
+    "cmp",
+    "cp",
+    "cut",
+    "getfacl",
+    "getfattr",
+    "mktemp",
+    "mv",
+    "pwd",
+    "sed",
+    "sha256sum",
+    "stat",
+    "tar",
+)
+
 
 def fleet_data():
     return {
@@ -642,8 +658,9 @@ class FleetAndChangeTests(unittest.TestCase):
         self.assertIn("mv -fT", script)
 
     @unittest.skipUnless(
-        Path("/bin/sh").is_file() and shutil.which("sha256sum"),
-        "archive validation integration needs a POSIX shell and sha256sum",
+        Path("/bin/sh").is_file()
+        and all(shutil.which(tool) for tool in ARCHIVE_VALIDATION_TOOLS),
+        "archive validation integration needs its complete GNU/Linux toolchain",
     )
     def test_archive_validation_fails_closed_before_tampered_restore(self):
         mv_help = subprocess.run(

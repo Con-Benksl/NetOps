@@ -23,6 +23,7 @@ from netops_core.monitor import (
     _scheduler_executable,
     _validate_system_scope_launcher,
     _validate_system_scope_data_paths,
+    _verify_owner_manifest,
     _write_content,
     build_install_plan,
     install_monitor,
@@ -44,13 +45,11 @@ def mark_monitor_owned(paths: dict[str, Path]) -> None:
         if key in {"config", "service", "timer", "plist"}
         and path.exists()
     }
-    (state / STATE_MANIFEST_NAME).write_text(
-        json.dumps({"schema_version": "1.0", "files": files}),
-        encoding="utf-8",
+    (state / STATE_MANIFEST_NAME).write_bytes(
+        json.dumps({"schema_version": "1.0", "files": files}).encode("utf-8")
     )
-    (state / STATE_MARKER_NAME).write_text(
-        STATE_MARKER_CONTENT,
-        encoding="utf-8",
+    (state / STATE_MARKER_NAME).write_bytes(
+        STATE_MARKER_CONTENT.encode("utf-8")
     )
     if os.name != "nt":
         state.chmod(0o700)
@@ -71,7 +70,10 @@ def canonical_owned_linux_monitor(root: Path) -> dict[str, Path]:
     }
     paths["config"].parent.mkdir(parents=True)
     for key in ("config", "service", "timer"):
-        paths[key].write_text(f"owned-{key}\n", encoding="utf-8")
+        # Production uses binary writes so its ownership manifest covers the
+        # exact same LF bytes on every platform.  Text-mode fixtures silently
+        # rewrite these bytes to CRLF on Windows and manufacture tampering.
+        paths[key].write_bytes(f"owned-{key}\n".encode("utf-8"))
     mark_monitor_owned(paths)
     return paths
 
@@ -774,6 +776,14 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(result["removed_count"], 2)
             self.assertEqual(len(list(snapshots.glob("*.json"))), 3)
 
+    def test_owner_manifest_rejects_line_ending_rewrites(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = canonical_owned_linux_monitor(Path(temporary))
+            paths["config"].write_bytes(b"owned-config\r\n")
+
+            with self.assertRaisesRegex(ValueError, "modified outside NetOps"):
+                _verify_owner_manifest(paths, allow_missing=False)
+
     def test_pruning_refuses_unmarked_state_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -807,12 +817,15 @@ class MonitorTests(unittest.TestCase):
             assert active is not None
             _release_lock(active)
 
-            lock.write_text("not-a-pid\n", encoding="utf-8")
+            lock.write_bytes(b"not-a-pid\n")
             recovered = _acquire_lock(state, maximum_age=1)
             self.assertIsNotNone(recovered)
-            self.assertEqual(lock.read_text(encoding="utf-8"), "not-a-pid\n")
             assert recovered is not None
+            # A Windows byte-range lock intentionally prevents reading the
+            # locked byte through another descriptor.  Inspect only after
+            # release while still proving stale contents were preserved.
             _release_lock(recovered)
+            self.assertEqual(lock.read_bytes(), b"not-a-pid\n")
 
     @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows")
     def test_monitor_lock_corruption_is_an_error_not_live_contention(self):

@@ -93,6 +93,38 @@ class RemoteCollectorProcessTests(unittest.TestCase):
         self.assertIn("timed out", result["stderr"])
         self.assertLess(duration, 2.0)
 
+    def test_stalled_pipe_reader_fails_closed_instead_of_returning(self):
+        collector = load_collector_namespace()
+        release = collector["threading"].Event()
+        stopped = collector["threading"].Event()
+        original_drain = collector["drain_stream"]
+        stopped_count = 0
+        stopped_lock = collector["threading"].Lock()
+
+        def stalled_drain(stream, buffer):
+            nonlocal stopped_count
+            release.wait(timeout=5)
+            try:
+                original_drain(stream, buffer)
+            finally:
+                with stopped_lock:
+                    stopped_count += 1
+                    if stopped_count == 2:
+                        stopped.set()
+
+        collector["drain_stream"] = stalled_drain
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError, "collector pipe reader did not terminate"
+            ):
+                collector["run"](
+                    [sys.executable, "-c", "pass"],
+                    timeout=0.05,
+                )
+        finally:
+            release.set()
+            self.assertTrue(stopped.wait(timeout=2))
+
 
 if __name__ == "__main__":
     unittest.main()

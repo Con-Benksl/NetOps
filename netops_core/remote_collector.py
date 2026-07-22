@@ -5,11 +5,11 @@ import json
 import os
 import platform
 import re
-import selectors
 import signal
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import unicodedata
 
@@ -95,26 +95,21 @@ def terminate_process_group(proc):
         proc.kill()
         proc.wait(timeout=TERMINATION_GRACE_SECONDS)
 
-def close_registered_stream(selector, stream):
+def drain_stream(stream, buffer):
     try:
-        selector.unregister(stream)
-    except (KeyError, ValueError):
-        pass
-    stream.close()
-
-def drain_ready_streams(selector, buffers, wait_seconds):
-    events = selector.select(wait_seconds)
-    for key, _mask in events:
-        stream = key.fileobj
+        while True:
+            try:
+                chunk = os.read(stream.fileno(), READ_CHUNK_BYTES)
+            except (OSError, ValueError):
+                break
+            if not chunk:
+                break
+            append_tail(buffer, chunk)
+    finally:
         try:
-            chunk = os.read(stream.fileno(), READ_CHUNK_BYTES)
-        except OSError:
-            chunk = b""
-        if chunk:
-            append_tail(buffers[key.data], chunk)
-        else:
-            close_registered_stream(selector, stream)
-    return bool(events)
+            stream.close()
+        except (OSError, ValueError):
+            pass
 
 def run(args, timeout=8):
     executable = shutil.which(args[0], path=SYSTEM_PATH)
@@ -141,39 +136,45 @@ def run(args, timeout=8):
 
     assert proc.stdout is not None
     assert proc.stderr is not None
-    selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
-    selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    streams = (proc.stdout, proc.stderr)
+    readers = (
+        threading.Thread(
+            target=drain_stream,
+            args=(proc.stdout, buffers["stdout"]),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=drain_stream,
+            args=(proc.stderr, buffers["stderr"]),
+            daemon=True,
+        ),
+    )
+    for reader in readers:
+        reader.start()
     deadline = started + max(float(timeout), 0.0)
     timed_out = False
     try:
-        while selector.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+        else:
+            try:
+                returncode = proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
                 timed_out = True
-                break
-            drain_ready_streams(selector, buffers, min(remaining, 0.1))
 
+        # A direct parent can exit while a descendant keeps an inherited pipe
+        # open. Such work is still part of this bounded command and must not
+        # turn a timeout into a successful return from the group leader.
         if not timed_out:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            for reader in readers:
+                reader.join(timeout=max(deadline - time.monotonic(), 0.0))
+            if any(reader.is_alive() for reader in readers):
                 timed_out = True
-            else:
-                try:
-                    returncode = proc.wait(timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    timed_out = True
 
         if timed_out:
             terminate_process_group(proc)
-            drain_deadline = time.monotonic() + TERMINATION_GRACE_SECONDS
-            while selector.get_map() and time.monotonic() < drain_deadline:
-                drain_ready_streams(
-                    selector,
-                    buffers,
-                    min(0.05, max(drain_deadline - time.monotonic(), 0.0)),
-                )
         else:
             # Kill background work that remains in this command's process
             # group even if it closed both pipes. A deliberately detached new
@@ -181,9 +182,22 @@ def run(args, timeout=8):
             if process_group_exists(proc.pid):
                 terminate_process_group(proc)
     finally:
-        for key in list(selector.get_map().values()):
-            close_registered_stream(selector, key.fileobj)
-        selector.close()
+        drain_deadline = time.monotonic() + TERMINATION_GRACE_SECONDS
+        for reader in readers:
+            reader.join(timeout=max(drain_deadline - time.monotonic(), 0.0))
+        for reader, stream in zip(readers, streams):
+            if reader.is_alive():
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+        for reader in readers:
+            reader.join(timeout=0.05)
+        if any(reader.is_alive() for reader in readers):
+            # Continuing with a reader that still owns a pipe would permit
+            # later commands to accumulate stuck daemon threads and race with
+            # buffer serialization.  Abort the one-shot collector instead.
+            raise RuntimeError("collector pipe reader did not terminate")
 
     stdout = clean(bytes(buffers["stdout"]).decode("utf-8", errors="replace"))
     stderr = clean(bytes(buffers["stderr"]).decode("utf-8", errors="replace"))

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import platform
-import locale
 import math
 import json
 import shutil
@@ -458,6 +457,10 @@ def run_command(
     stderr_tail = bytearray()
     stdout_truncated = [False]
     stderr_truncated = [False]
+    # ``capture_limit`` is a limit on the sanitized text returned to callers.
+    # Retain at most four UTF-8 bytes per requested character while streaming,
+    # then enforce the character limit after decoding and CRLF normalization.
+    raw_capture_limit = capture_limit * 4
 
     def drain(stream: Any, tail: bytearray, truncated: list[bool]) -> None:
         try:
@@ -466,7 +469,7 @@ def run_command(
                 if not block:
                     break
                 tail.extend(block)
-                overflow = len(tail) - capture_limit
+                overflow = len(tail) - raw_capture_limit
                 if overflow > 0:
                     truncated[0] = True
                     del tail[:overflow]
@@ -478,7 +481,7 @@ def run_command(
             except (OSError, ValueError):
                 pass
 
-    encoding = locale.getpreferredencoding(False) or "utf-8"
+    encoding = "utf-8"
     command = [executable, *args[1:]]
     creationflags = 0
     windows_job: int | None = None
@@ -637,12 +640,17 @@ def run_command(
         for reader in readers:
             reader.join(timeout=1)
 
-    stdout = _sanitize_process_output(
-        bytes(stdout_tail).decode(encoding, errors="replace")
-    )
-    stderr = _sanitize_process_output(
-        bytes(stderr_tail).decode(encoding, errors="replace")
-    )
+    def bounded_output(tail: bytearray, truncated: list[bool]) -> str:
+        output = _sanitize_process_output(
+            bytes(tail).decode(encoding, errors="replace")
+        )
+        if len(output) > capture_limit:
+            truncated[0] = True
+            output = output[-capture_limit:]
+        return output
+
+    stdout = bounded_output(stdout_tail, stdout_truncated)
+    stderr = bounded_output(stderr_tail, stderr_truncated)
     duration = int((time.monotonic() - started) * 1000)
     if not timed_out:
         return {

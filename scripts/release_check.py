@@ -166,6 +166,8 @@ def _check_ci_contract(root: Path) -> list[str]:
         '"setuptools==83.0.0"',
         '"build==1.3.0"',
         '"jsonschema==4.25.1"',
+        "if: runner.os == 'Linux'",
+        "sudo apt-get install --no-install-recommends -y acl attr",
         'SOURCE_DATE_EPOCH: "1720000000"',
         "python scripts/release_check.py . --require-jsonschema",
         "python scripts/reproducible_build.py .",

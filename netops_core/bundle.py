@@ -975,26 +975,36 @@ def export_bundle(
     if len(manifest_bytes) > _MEMBER_SIZE_LIMITS["manifest.json"]:
         raise ValueError("support archive member exceeds size limit: manifest.json")
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent, delete=False
-    ) as handle:
-        temporary = Path(handle.name)
+    temporary: Path | None = None
     try:
-        with zipfile.ZipFile(
-            temporary, mode="w", compression=zipfile.ZIP_STORED
-        ) as archive:
-            archive.writestr("bundle.json", bundle_bytes)
-            archive.writestr("report.md", report_bytes)
-            archive.writestr("manifest.json", manifest_bytes)
-        with temporary.open("rb") as handle:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            dir=output.parent,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            with zipfile.ZipFile(
+                handle, mode="w", compression=zipfile.ZIP_STORED
+            ) as archive:
+                archive.writestr("bundle.json", bundle_bytes)
+                archive.writestr("report.md", report_bytes)
+                archive.writestr("manifest.json", manifest_bytes)
+            # Keep the original writable descriptor bound to the temporary
+            # inode through finalization.  Windows rejects ``fsync`` on a
+            # read-only descriptor, while reopening by path would introduce a
+            # replacement race before publication.
+            handle.flush()
             os.fsync(handle.fileno())
         # A hard-link publish is atomic and fails if another process created the
         # destination after the preflight check.  It therefore cannot silently
         # overwrite an existing support archive on POSIX or Windows.
+        assert temporary is not None
         os.link(temporary, output)
         temporary.unlink()
     except Exception:
-        temporary.unlink(missing_ok=True)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
         raise
     return output
 

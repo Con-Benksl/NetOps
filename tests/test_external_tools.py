@@ -8,6 +8,7 @@ from unittest.mock import patch
 from netops_core.external_tools import (
     TOOL_INDEX,
     _compatibility_check,
+    _discover,
     _json_value,
     _read_json_file,
     run_curated_tools,
@@ -759,6 +760,46 @@ class CuratedToolTests(unittest.TestCase):
                 status = tool_status(["mtr"])["tools"][0]
         self.assertFalse(status["available"])
         self.assertEqual(status["source"], "invalid-environment:NETOPS_TOOL_MTR")
+
+    @patch("netops_core.external_tools.platform_id", return_value="windows")
+    def test_windows_binary_override_requires_a_launchable_suffix(self, _platform):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            extensionless = root / "nexttrace"
+            extensionless.write_bytes(b"MZ")
+            batch_file = root / "nexttrace.cmd"
+            batch_file.write_text("@echo off\n", encoding="utf-8")
+            executable = root / "nexttrace.EXE"
+            executable.write_bytes(b"MZ")
+
+            with patch.dict(
+                os.environ,
+                {"NETOPS_TOOL_NEXTTRACE": str(extensionless)},
+            ):
+                missing = _discover(TOOL_INDEX["nexttrace"])
+            with patch.dict(
+                os.environ,
+                {"NETOPS_TOOL_NEXTTRACE": str(batch_file)},
+            ):
+                batch = _discover(TOOL_INDEX["nexttrace"])
+            with patch.dict(
+                os.environ,
+                {"NETOPS_TOOL_NEXTTRACE": str(executable)},
+            ):
+                detected = _discover(TOOL_INDEX["nexttrace"])
+
+        self.assertEqual(
+            missing,
+            (None, "invalid-environment:NETOPS_TOOL_NEXTTRACE"),
+        )
+        self.assertEqual(
+            batch,
+            (None, "invalid-environment:NETOPS_TOOL_NEXTTRACE"),
+        )
+        self.assertEqual(
+            detected,
+            (str(executable.resolve()), "environment:NETOPS_TOOL_NEXTTRACE"),
+        )
 
     @patch("netops_core.external_tools._discover", return_value=("/usr/bin/mtr", "PATH"))
     @patch("netops_core.external_tools.platform_id", return_value="linux")

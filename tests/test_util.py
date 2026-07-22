@@ -144,17 +144,37 @@ class UtilityBoundaryTests(unittest.TestCase):
 
     def test_command_capture_limit_is_explicit_bounded_and_per_call(self):
         result = run_command(
-            [sys.executable, "-c", "print('x' * 100)"],
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'x' * 100 + b'\\r\\n')",
+            ],
             timeout=5,
             capture_limit=17,
         )
         self.assertEqual(result["stdout"], "x" * 16 + "\n")
+        self.assertTrue(result["stdout_truncated"])
         for value in (0, 1_048_577, True):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 run_command(
                     [sys.executable, "-c", "pass"],
                     capture_limit=value,  # type: ignore[arg-type]
                 )
+
+    def test_command_capture_limit_counts_utf8_characters_not_bytes(self):
+        result = run_command(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(('猫' * 100 + 'TAIL').encode())",
+            ],
+            timeout=5,
+            capture_limit=12,
+        )
+
+        self.assertEqual(result["stdout"], "猫" * 8 + "TAIL")
+        self.assertEqual(len(result["stdout"]), 12)
+        self.assertTrue(result["stdout_truncated"])
 
     def test_command_output_is_streamed_to_a_bounded_tail(self):
         result = run_command(

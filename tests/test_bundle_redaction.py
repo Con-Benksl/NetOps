@@ -1,14 +1,41 @@
 import json
+import os
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from netops_core.bundle import export_bundle, inspect_bundle
 from netops_core.models import DiagnosticBundle, Observation, write_bundle
 
 
 class BundleRedactionTests(unittest.TestCase):
+    def test_export_flushes_archive_through_writable_descriptor(self):
+        bundle = DiagnosticBundle(mode="node", vantage_points=["local"]).finish()
+        real_fsync = os.fsync
+        fsync_calls: list[int] = []
+
+        def require_writable_descriptor(descriptor: int) -> None:
+            # A zero-byte write changes no archive data, but fails with EBADF
+            # when the descriptor is read-only.  This reproduces Windows'
+            # ``fsync`` access requirement on POSIX CI as well.
+            os.write(descriptor, b"")
+            real_fsync(descriptor)
+            fsync_calls.append(descriptor)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = write_bundle(root / "source.json", bundle)
+            with patch(
+                "netops_core.bundle.os.fsync",
+                side_effect=require_writable_descriptor,
+            ):
+                archive = export_bundle(source, root / "export.zip")
+
+            self.assertTrue(archive.is_file())
+            self.assertTrue(fsync_calls)
+
     def test_export_redacts_network_identity_and_credentials(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["local"])
         bundle.environment = {"platform": {"hostname": "personal-laptop"}}

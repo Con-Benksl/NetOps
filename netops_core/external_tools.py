@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
@@ -400,21 +401,46 @@ def tool_catalog() -> dict[str, Any]:
     }
 
 
+def _is_launchable_override(candidate: Path, platform_name: str) -> bool:
+    if not candidate.is_file():
+        return False
+    if platform_name == "windows":
+        # Windows does not model POSIX execute bits: os.access(..., X_OK) can
+        # accept an arbitrary regular file. Restrict binary overrides to native
+        # executable formats; batch files would silently introduce cmd.exe
+        # parsing despite the adapter's shell-free argument contract.
+        return (
+            candidate.suffix.casefold() in {".com", ".exe"}
+            and os.access(candidate, os.R_OK)
+        )
+    try:
+        mode = candidate.stat().st_mode
+    except OSError:
+        return False
+    executable_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    return bool(mode & executable_bits) and os.access(candidate, os.X_OK)
+
+
 def _discover(spec: ToolSpec) -> tuple[str | None, str]:
+    current = platform_id()
     override = os.environ.get(spec.env_var)
     if override:
         candidate = Path(override).expanduser()
         usable = (
             os.access(candidate, os.R_OK)
             if spec.shell_script
-            else os.access(candidate, os.X_OK)
+            else _is_launchable_override(candidate, current)
         )
         if candidate.is_file() and usable:
             return str(candidate.resolve()), f"environment:{spec.env_var}"
         return None, f"invalid-environment:{spec.env_var}"
     for name in spec.candidates:
         found = shutil.which(name, path=trusted_system_environment()["PATH"])
-        if found:
+        if found and (
+            current != "windows"
+            or spec.shell_script
+            or _is_launchable_override(Path(found), current)
+        ):
             return found, "PATH"
     return None, "not-found"
 

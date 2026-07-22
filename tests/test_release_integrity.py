@@ -85,6 +85,25 @@ class ReleaseIntegrityTests(unittest.TestCase):
             errors,
         )
 
+    def test_ci_gate_requires_linux_archive_dependencies(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            workflow = (ROOT / ".github/workflows/test.yml").read_text(
+                encoding="utf-8"
+            )
+            workflow = workflow.replace(
+                "          sudo apt-get install --no-install-recommends -y acl attr\n",
+                "",
+            )
+            workflow_path = root / ".github/workflows/test.yml"
+            workflow_path.parent.mkdir(parents=True)
+            workflow_path.write_text(workflow, encoding="utf-8")
+            errors = _check_ci_contract(root)
+        self.assertTrue(
+            any("apt-get install" in item for item in errors),
+            errors,
+        )
+
     def test_remote_change_execution_remains_unreleased(self):
         self.assertEqual(_check_change_execution_gate(ROOT), [])
 
