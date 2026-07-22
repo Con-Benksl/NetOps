@@ -1,4 +1,4 @@
 interface:
   display_name: "NetOps · 故障诊断"
   short_description: "按链路区段定位断连、超时和目标站拒绝"
-  default_prompt: "用 $netops-fix 先给我带解释的故障状态和检查范围选项，再根据证据定位问题；重启代理或改网络前先保护 Codex 控制通道，本版本只生成修复计划并交接、不执行远程写入。"
+  default_prompt: "用 $netops-fix 先给我带解释的故障状态和检查范围选项，再根据证据定位问题；独立远端 VPS 的修复在说明影响和回滚并得到确认后，直接由 Codex 通过 SSH 执行。"

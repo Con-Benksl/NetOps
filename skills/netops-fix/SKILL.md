@@ -13,7 +13,7 @@ Before reading a shared reference, resolve `<reference-root>` once. Use `../../r
 
 ## Direct-Invocation Safety
 
-These rules apply even when this child Skill is invoked without the root router. This release stops at audit, plan, and review handoff. Do not call `change apply`, `change rollback`, SSH mutation, or any hidden execution path. A separately operated remote mutation still requires a reviewed exact plan ID, explicit authorization for that ID, affected-state backup, pre-apply validation, post-apply verification, an executable rollback, and an `allow` decision from `<reference-root>/control-channel-safety.md`. Preserve existing nodes and the host default route unless a separately reviewed exception explicitly changes either invariant. Diagnosis and read-only evidence collection do not imply mutation authorization.
+These rules apply even when this child Skill is invoked without the root router. Authorized direct SSH is allowed for a proven repair on an unrelated remote VPS that does not change the local control plane. Require explicit authorization, affected-state backup, pre-apply validation, post-apply verification, executable rollback, and a concise receipt. Use a reviewed exact plan ID and `netopsctl change apply` for shared-path or exact-file transactions, not as a blanket requirement for every SSH repair. Preserve existing nodes and the host default route unless the reviewed operation explicitly changes either invariant. Diagnosis and read-only evidence collection do not imply mutation authorization.
 
 ## Guided Choices
 
@@ -36,9 +36,9 @@ When more than one observation path is available, offer `当前设备（推荐�
 
 ## Repair Safety
 
-Before restarting a local proxy, replacing a configuration, toggling TUN, changing DNS/routes/firewall, or restarting a node used by Codex, apply `<reference-root>/control-channel-safety.md`. Capture incident evidence first. If Codex dependency is unknown, do not use a restart as a diagnostic experiment.
+Before restarting a local proxy, toggling TUN, changing local DNS/routes/firewall, or restarting a node used by Codex, apply `<reference-root>/control-channel-safety.md`. Capture incident evidence first. If Codex dependency is unknown, do not use a shared-path restart as a diagnostic experiment. For a proven repair on an unrelated VPS, show the execution confirmation card, obtain authorization, then let Codex perform the SSH repair and rollback directly; generate an exact plan only when its stronger transaction contract is needed.
 
-For manual recovery, give exactly one main action, its expected result, what to do if the screen differs, and how to undo it. When the user reports that Codex or all applications are offline, stop root-cause diagnosis and use the emergency recovery card to restore a known-good path first.
+For local control-plane recovery, give exactly one main action, its expected result, what to do if the screen differs, and how to undo it. Do not transfer ordinary remote Linux commands to the user. When the user reports that Codex or all applications are offline, stop root-cause diagnosis and use the emergency recovery card to restore a known-good path first.
 
 ## Curated Evidence
 

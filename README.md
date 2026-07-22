@@ -4,7 +4,7 @@ VPS 网络出问题时，真正麻烦的往往不是少了一条命令，而是�
 
 NetOps 就是用来查这件事的。它包含一组可供 Codex 使用的 Agent Skills，以及一个只依赖 Python 标准库的诊断工具。你可以直接用中文描述问题，也可以在命令行里运行扫描。
 
-它的做事顺序很简单：**先扫描，再判断；先保护 Codex 的联网通道，再改网络。** 本版本在任何条件下都不会通过 NetOps 直接修改远程配置；授权、备份和回滚合同只是交给外部人工流程继续审核的前置材料。
+它的做事顺序很简单：**先扫描，再判断；先保护 Codex 的联网通道，再改网络。** 对不承载当前 Codex 流量、也不修改本机网络的 VPS，确认影响后由 Codex 直接通过 SSH 完成备份、修改、验证和失败回滚，不要求用户手动复制 Linux 命令。
 
 ## 什么时候适合用
 
@@ -49,12 +49,12 @@ NetOps 会从当前能够访问的观察点收集信息：
 需要 Node.js 22.20.0 或更高版本。从已审查的精确发布标签安装。不要把浮动分支或 `latest` 管道直接交给 shell；下面的 CLI 版本和 NetOps 标签都固定。安装器在 Codex 环境中可能自动进入非交互模式，因此先用只读列表确认恰好发现 `netops` 和五个子 Skill，再单独执行安装：
 
 ```bash
-git clone --branch v0.2.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.3.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -l --full-depth
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
 ```
 
-发布者尚未创建 `v0.2.0` 标签时，这条命令应当失败；不要退回 `main` 或自动选择最新提交。
+发布者尚未创建 `v0.3.0` 标签时，这条命令应当失败；不要退回 `main` 或自动选择最新提交。
 
 安装后，直接描述你遇到的情况即可。例如：
 
@@ -80,7 +80,7 @@ NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent
 
 每轮最多出现 3 个问题，每题只有 2–3 个选项。推荐项会放在前面，每个选项都会说明接下来做什么、有什么限制。能自动扫描出来的信息不会反过来让你猜；你的目标已经明确时，也不会强制弹出菜单。
 
-如果信息不够，NetOps 会优先建议只读扫描。需要改服务器时，它会先说明准备改什么、如何验证以及怎样回滚，并生成可审核计划。本版本不发布远程写入执行器：`netopsctl change apply` 和 `netopsctl change rollback` 都会在读取计划、创建回执或连接 SSH 前无条件拒绝，公开 CLI 和 Python API 均不提供执行授权开关，也没有环境变量或隐藏参数可以绕过。实际变更需在本工具之外另行审核和执行。
+如果信息不够，NetOps 会优先建议只读扫描。需要改服务器时，它会先说明准备改什么、不会改什么、预计中断多久、失败有什么影响，以及怎样备份、验证和回滚。独立远端 VPS 可以在确认后由 Codex 直接 SSH 执行；高风险精确文件事务或共享远端路径可以改用不可变计划和自动回滚。两种方式都只问一次 `执行 / 只保留方案 / 取消`，不会把远端命令甩给用户手动完成。
 
 ## 修网络时，怎样避免 Codex 自己掉线
 
@@ -90,28 +90,28 @@ NetOps 会把这件事当作所有流程共同遵守的底层安全门：
 
 1. 先确认 Codex 当前经过哪些代理、TUN、节点和 VPS。
 2. 对照本次准备修改的组件，判断两条路径是否重合。
-3. 路径未知时，只能扫描和生成计划，不能自动执行。
-4. 路径重合时，优先切到真正独立的网络、代理进程或设备。
-5. 本版本不会自动武装远端回滚或执行写入；把计划中的回滚合同当作人工审核材料，不能当作已经存在的恢复保护。
-6. 用户需要手动操作时，Codex 每次只给一个动作，同时说明预期结果、异常处理和撤销方式。
+3. 目标是另一台不承载当前流量的 VPS、且不改变本机网络时，确认后由 Codex 直接 SSH 执行。
+4. 目标与当前节点或 VPS 重合时，优先切到真正独立的网络、代理进程或设备。
+5. 共享远端路径只有在回滚合同完整时才允许执行；执行器会在首次写入前确认自动回滚 timer 已启动，并在新旧路径验证通过后解除。
+6. 只有本机 TUN、系统代理、活动代理进程、DNS、路由或防火墙切换等可能让 Codex 当场失联的动作，才要求用户手动完成；远端 Linux 命令仍由 Codex 执行。
 
 同一个代理软件里的“备用节点”通常不算独立通道，因为重启软件或 TUN 时所有节点会一起中断。手机热点、另一台设备、独立代理进程或提前验证过的服务商控制台更可靠。
 
-如果已经失联，先不要删除配置或反复重装。关闭测试中的 TUN/失效系统代理，切换到已知可用的独立网络，恢复普通 HTTPS 后重新打开 Codex，再把计划 ID、备份位置和最后一步交给它继续处理。完整步骤见 [`references/control-channel-safety.md`](references/control-channel-safety.md)。
+如果已经失联，先不要删除配置或反复重装。关闭测试中的 TUN/失效系统代理，切换到已知可用的独立网络，恢复普通 HTTPS 后重新打开 Codex，再把变更摘要或计划 ID、备份位置和最后一步交给它继续处理。完整步骤见 [`references/control-channel-safety.md`](references/control-channel-safety.md)。
 
 ### 方式二：直接运行命令行工具
 
 需要 Python 3.10–3.14：
 
 ```bash
-git clone --branch v0.2.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.3.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 cd NetOps
 python3 scripts/netopsctl.py --help
 ```
 
-这里同样要求 `v0.2.0` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
+这里同样要求 `v0.3.0` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
 
-`0.2.0` 将诊断包、私有 fleet 覆盖和变更计划三项公开 JSON 合同统一升级为 `schema_version: "2.0"`。仓库早期 `0.1.0` 仅是预发布原型，其 `1.0` 工件不属于兼容承诺；本版本会明确拒绝，且不会做可能改变证据含义的静默迁移。监控本地配置/所有权清单以及支持包容器各自的内部 `1.0` 格式不在这次公共合同升级范围内。
+`0.3.0` 将变更 spec/plan 合同升级为 `schema_version: "3.0"`，并开放受控远程执行：计划、控制通道门禁、精确文件备份、自动回滚和回执保持绑定。`0.2.0` 的 `2.0` 变更计划会被明确拒绝，必须重新审计和生成。fleet 与诊断包公共合同仍为 `2.0`；监控本地配置/所有权清单以及支持包容器各自的内部 `1.0` 格式不受这次变更影响。
 
 扫描当前电脑：
 
@@ -131,7 +131,22 @@ python3 scripts/netopsctl.py safety assess \
   --evidence "alternate management path verified"
 ```
 
-输出中的 `guard.decision` / `can_apply` 只表示控制通道审核条件是否满足，不是执行许可；`execution_available` 在本版本固定为 `false`。本版本只保留 `change plan`：它会根据变更目标、备份覆盖、回滚步骤和各阶段最长耗时生成计划绑定的审核合同；`change apply` 与 `change rollback` 无论审核结果为何都会 fail-closed。只写“可以手动恢复”也不会改变这条发布边界。
+输出中的 `guard.decision` / `can_apply` 表示控制通道审核是否允许进入执行确认，仍不等于用户授权。`execution_mode` 会明确区分 `direct-ssh-or-plan`、`exact-plan`、`manual-local-control-plane` 和 `read-only`；`execution_available: true` 只说明精确计划执行器已发布。`change apply` 必须同时提供 `--authorized`、完整的 `--confirm-plan-id` 和 15 分钟内的 `--current-control-channel`；它会重新检查计划时效、主机信息、备份覆盖和门禁结果。只写“可以手动恢复”不能绕过共享路径条件。
+
+审核 spec 后先生成计划；向用户展示计划 ID 和影响卡并获得明确授权，再执行同一个计划：
+
+```bash
+netopsctl change plan --spec change-spec.json --fleet fleet.json --output change-plan.json
+netopsctl change apply \
+  --plan change-plan.json \
+  --fleet fleet.json \
+  --current-control-channel current-control-channel.json \
+  --confirm-plan-id <审核过的完整计划ID> \
+  --authorized \
+  --receipt change-apply.receipt.json
+```
+
+`current-control-channel.json` 必须只包含 `observed_at` 和与计划完全一致的 `control_channel`，时间不得早于执行前 15 分钟。通过 Skill 工作时该文件由 Codex 根据刚完成的检查生成，不要求用户手写。缺少 `--authorized`、计划 ID 不匹配、计划超过 24 小时、控制通道证据过期或改变、现场文件变化或门禁重新计算为 `block` 时，精确计划执行器会在首次远程写入前停止。失败后先看回执；状态为 `rollback-pending` 时等待已武装的自动回滚，不要重复应用。
 
 这条命令会生成两个文件：供程序读取的 `client.json`，以及适合直接阅读的 `client.md`。如果还需要确认公网出口，可以主动加上 `--external`：
 
@@ -237,9 +252,9 @@ netopsctl bundle inspect node-support.zip --report-output node-support-review.md
 | --- | --- |
 | `netops-start` | 解释术语，帮助第一次接触 VPS 的用户确定从哪里开始 |
 | `netops-scan` | 扫描客户端、VPS、节点和当前可见的传输路径 |
-| `netops-build` | 审计现状并规划 3x-ui、Xray、节点、DNS、TLS、专属出口或标准变更；本版本不执行 |
+| `netops-build` | 审计、规划并在明确授权后执行 3x-ui、Xray、节点、DNS、TLS、专属出口或标准变更 |
 | `netops-fix` | 诊断断连、超时、TUN、DNS、IPv6 和目标站拒绝等问题 |
-| `netops-manage` | 审查监控方案与已有数据，并规划备份、升级、安全、容量、舰队标准/漂移和用户生命周期；本版本不安装调度任务或执行远程写入 |
+| `netops-manage` | 审查监控方案与已有数据，并受控执行备份、升级、安全、容量、舰队标准/漂移和用户生命周期变更；仍不安装调度任务 |
 
 协议说明和具体故障案例放在 `references/` 中，不会因为多了一个网站或运营商就再增加一套 Skill。
 
@@ -268,7 +283,7 @@ netopsctl bundle inspect node-support.zip --report-output node-support-review.md
 - 不把“端口能连通”直接解释成 VLESS、Hysteria2 等协议一定正常。
 - 不承诺还原运营商和服务商内部无法观测的完整物理线路。
 - 不会为了修一个节点，默认改变整台 VPS 的出口或覆盖已有配置。
-- 本版本不会通过 `netopsctl` 执行任何远程变更或远端恢复；`change apply` / `change rollback` 始终拒绝。
+- 不会未经授权修改远端系统。独立远端 VPS 可由 Codex 直接 SSH 执行；若操作会触碰当前 Codex 路径，则必须先建立独立通道或自动回滚保护。
 - 本版本不会安装、停止或删除本地调度任务；监控 install/remove 只有不可执行的 dry-run 审查材料。
 - 不会在 Codex 控制通道未知，或只准备了同一代理应用内的备用节点时重启活动网络路径。
 

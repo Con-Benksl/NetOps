@@ -31,7 +31,7 @@ GUIDED_RULES = (
     "推荐项放在第一位",
     "request_user_input",
     "能够通过只读扫描获得",
-    "不能代替对最终计划 ID 的明确授权",
+    "不能代替对最终远程操作的明确授权",
 )
 CONTROL_CHANNEL_RULES = (
     "每次只给一个主要动作",
@@ -41,10 +41,13 @@ CONTROL_CHANNEL_RULES = (
     "紧急避险卡",
     "重新启动 Codex",
     "人工恢复说明不能代替",
+    "独立远端 VPS",
+    "远端 Linux 命令默认由 Codex",
 )
 DIRECT_INVOCATION_RULES = (
     "## Direct-Invocation Safety",
-    "reviewed exact plan ID",
+    "Authorized direct SSH",
+    "local control plane",
     "explicit authorization",
     "affected-state backup",
     "pre-apply validation",

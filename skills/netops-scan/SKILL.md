@@ -11,9 +11,9 @@ Collect the minimum evidence needed to distinguish client, access-network, VPS i
 
 Before reading a shared reference, resolve `<reference-root>` once. Use `../../references` when `../../references/guided-dialogue.md` exists (repository or monolithic root installation); otherwise use `../netops/references` when `../netops/references/guided-dialogue.md` exists (flat installation beside the root `netops` Skill). If neither candidate exists, stop and report an incomplete installation. Do not reconstruct or bypass missing safety rules.
 
-## Remote Execution Release Boundary
+## Read-Only Boundary
 
-This release stops at audit, plan, and review handoff. Do not call `change apply`, `change rollback`, SSH mutation, or any hidden execution path. Authorized SSH in this Skill is read-only scanning only.
+This Skill is strictly read-only. Authorized SSH here is for scanning only; hand proven changes to `netops-build`, `netops-fix`, or `netops-manage`, where execution requires explicit authorization of a reviewed SSH transaction summary, with an exact plan only when its stronger contract is needed.
 
 ## Modes
 

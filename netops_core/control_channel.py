@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unicodedata
 from pathlib import PurePosixPath
 from typing import Any
@@ -208,10 +209,10 @@ def _normalize_rollback_contract(raw: Any) -> dict[str, Any] | None:
     normalized_hashes: list[dict[str, str]] = []
     seen_hash_targets: set[str] = set()
     for index, item in enumerate(preflight_hashes):
-        if not isinstance(item, dict) or set(item) != {
-            "target",
-            "sha256",
-            "metadata_sha256",
+        allowed_keys = {"target", "sha256", "metadata_sha256"}
+        if not isinstance(item, dict) or frozenset(item) not in {
+            frozenset(allowed_keys),
+            frozenset({*allowed_keys, "query"}),
         }:
             raise ValueError(
                 f"rollback_contract.preflight_hashes[{index}] is invalid"
@@ -246,6 +247,23 @@ def _normalize_rollback_contract(raw: Any) -> dict[str, Any] | None:
                 f"rollback_contract.preflight_hashes[{index}].metadata_sha256 is invalid"
             )
         normalized_hashes[-1]["metadata_sha256"] = metadata_digest
+        if "query" in item:
+            query = item.get("query")
+            if (
+                not isinstance(query, str)
+                or not query.strip()
+                or len(query) > 16_384
+                or not re.match(r"^\s*SELECT\b", query, flags=re.IGNORECASE)
+                or any(
+                    unicodedata.category(character) in {"Cc", "Cf"}
+                    and character not in {"\n", "\t"}
+                    for character in query
+                )
+            ):
+                raise ValueError(
+                    f"rollback_contract.preflight_hashes[{index}].query is invalid"
+                )
+            normalized_hashes[-1]["query"] = query
     normalized["preflight_hashes"] = normalized_hashes
     if [item["target"] for item in normalized_hashes] != normalized[
         "preflight_file_targets"
@@ -287,7 +305,7 @@ def emergency_steps(platform_name: str = "unknown") -> list[str]:
         "先关闭测试中的 TUN 或系统代理；不要先卸载代理软件。",
         "切换到与故障路径无关的网络，例如手机热点或另一条已验证线路。",
         "只启动最后一次确认可用的代理配置，确认普通 HTTPS 可以访问。",
-        "重新启动 Codex，并说明刚才执行到哪一步、计划 ID 和备份位置。",
+        "重新启动 Codex，并说明刚才执行到哪一步、变更摘要或计划 ID 和备份位置。",
     ]
     if platform_name == "macos":
         steps.insert(
@@ -321,9 +339,17 @@ def assess_control_channel(
     reasons: list[str] = []
     can_apply = False
     risk = "blocked"
+    execution_mode = "read-only"
+    local_surfaces = sorted(set(control["change_surfaces"]) & LOCAL_CHANGE_SURFACES)
 
     if "unknown" in control["change_surfaces"]:
         reasons.append("尚未明确本次变更会触碰哪些网络组件。")
+    elif local_surfaces:
+        execution_mode = "manual-local-control-plane"
+        reasons.append(
+            "本机控制面变更必须由用户手动完成，不能由远端执行器接管："
+            + ", ".join(local_surfaces)
+        )
     elif control["dependency"] == "unknown":
         reasons.append("尚未确认 Codex 联网是否依赖本次要修改的组件。")
     elif not control["evidence"]:
@@ -341,13 +367,13 @@ def assess_control_channel(
         ):
             can_apply = True
             risk = "guarded"
-            reasons.append("已验证 Codex 使用不经过本次变更目标的独立管理通道。")
+            execution_mode = "direct-ssh-or-plan"
+            reasons.append(
+                "已验证目标不在当前 Codex 路径上；可直接 SSH 或使用精确计划执行器。"
+            )
         else:
             reasons.append("独立通道尚未通过实际连通性验证。")
     elif control["continuity_strategy"] == "automatic-rollback":
-        local_surfaces = sorted(
-            set(control["change_surfaces"]) & LOCAL_CHANGE_SURFACES
-        )
         if control["host_reboot_planned"]:
             reasons.append("一次性 transient timer 不能保护会重启目标主机的变更。")
         elif local_surfaces:
@@ -372,7 +398,7 @@ def assess_control_channel(
             )
         elif contract["unverified_targets"]:
             reasons.append(
-                "自动回滚目标缺少 file-sha256 类型化前态校验："
+                "自动回滚目标缺少 file-sha256 / sqlite-query-sha256 类型化前态校验："
                 + ", ".join(contract["unverified_targets"])
             )
         elif not contract["executable"]:
@@ -387,36 +413,49 @@ def assess_control_channel(
         else:
             can_apply = True
             risk = "guarded-high"
+            execution_mode = "exact-plan"
             reasons.append(
-                f"审核合同要求独立流程在变更前设置 {timer['delay_seconds']} 秒自动回滚；"
-                "本版本不会武装 timer 或执行变更。"
+                f"执行器必须在首次写入前设置 {timer['delay_seconds']} 秒自动回滚，"
+                "并在新旧路径验证通过后解除。"
             )
     elif control["continuity_strategy"] == "independent-path":
         reasons.append("请先切换并验证独立通道，再把依赖状态标记为 independent。")
     else:
         reasons.append(
-            "仅靠人工恢复不能保证 Codex 断线后继续；审核条件不足，"
-            "且本版本不会自动应用。"
+            "仅靠人工恢复不能保证 Codex 断线后继续；请改用已验证独立通道，"
+            "或为远程目标提供完整的自动回滚合同。"
         )
 
-    if can_apply:
+    if execution_mode == "direct-ssh-or-plan":
         next_action = (
-            "审核条件满足；本版本仍只生成计划并交接，不会执行变更或武装 timer。"
+            "审核条件满足；展示目标主机、精确 SSH 操作、影响、备份、验证与回滚，"
+            "获得明确授权后由 Codex 执行。只有选择精确计划执行器时才要求计划 ID。"
+        )
+    elif execution_mode == "exact-plan":
+        next_action = (
+            "审核条件满足；先向用户展示计划 ID、影响、预计中断、验证与回滚方式，"
+            "获得该计划 ID 的明确授权后才可执行。"
+        )
+    elif execution_mode == "manual-local-control-plane":
+        next_action = (
+            "只让用户手动完成一个本机控制面动作；确认 Codex 仍在线后，"
+            "远端 Linux 命令继续由 Codex 执行。"
         )
     elif control["dependency"] == "shared":
         next_action = (
             "优先切换到独立网络或独立代理进程，并补充回滚审核材料；"
-            "本版本不会执行远程变更。"
+            "在控制通道门禁允许前不要执行。"
         )
     else:
         next_action = (
             "先扫描或由用户确认 Codex 当前经过的代理、TUN、节点和 VPS；"
-            "停止在计划与交接阶段。"
+            "控制通道未知时停止在计划阶段。"
         )
     return {
         "decision": "allow" if can_apply else "block",
         "can_apply": can_apply,
-        "execution_available": False,
+        "execution_available": True,
+        "execution_mode": execution_mode,
         "risk": risk,
         "reasons": reasons,
         "next_action": next_action,

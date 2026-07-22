@@ -13,7 +13,7 @@ Before reading a shared reference, resolve `<reference-root>` once. Use `../../r
 
 ## Direct-Invocation Safety
 
-These rules apply even when this child Skill is invoked without the root router. This release stops remote work at audit, plan, and review handoff. Do not call `change apply`, `change rollback`, SSH mutation, or any hidden execution path. A separately operated remote mutation still requires a reviewed exact plan ID, explicit authorization for that ID, affected-state backup, pre-apply validation, post-apply verification, an executable rollback, and an `allow` decision from `<reference-root>/control-channel-safety.md`. Preserve existing nodes and the host default route unless a separately reviewed exception explicitly changes either invariant. Scheduled monitor installation and removal are also unreleased: `netopsctl monitor install/remove` may only generate dry-run review material, never touch a scheduler, and have no authorization or private-function bypass. Upgrades, remote hardening, and standardization stop at plan/handoff in this release; a dry run or management menu is not authorization.
+These rules apply even when this child Skill is invoked without the root router. Authorized direct SSH is allowed for maintenance on an unrelated remote VPS when the local control plane remains unchanged. Require explicit authorization, affected-state backup, pre-apply validation, post-apply verification, executable rollback, and a concise receipt. Use a reviewed exact plan ID and `netopsctl change apply` for shared-path or exact-file transactions, not as a blanket requirement for every SSH maintenance action. Preserve existing nodes and the host default route unless the reviewed operation explicitly changes either invariant. Scheduled monitor installation and removal remain unreleased: `netopsctl monitor install/remove` may only generate dry-run review material and never touch a scheduler.
 
 ## Guided Choices
 
@@ -24,6 +24,8 @@ Follow `<reference-root>/guided-dialogue.md`. If the long-term goal is broad, of
 3. `升级与标准化`: compare versions and configuration drift before planning separate changes.
 
 For monitoring review location, offer `VPS 计划（推荐）`, `当前电脑计划`, or `两端分别审查`, and explain the different observation points. Generate review material only with `--dry-run`; do not claim that either side is installed or active.
+
+For an executable remote maintenance change, show the execution confirmation card from `<reference-root>/guided-dialogue.md` and wait for authorization of the exact operation. Codex then executes the remote SSH transaction; an exact plan ID is additionally required only when the plan executor is selected. A general request such as “standardize these servers” is not authorization for every host or operation.
 
 ## Operating Rhythm
 

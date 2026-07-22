@@ -104,7 +104,7 @@ class ReleaseIntegrityTests(unittest.TestCase):
             errors,
         )
 
-    def test_remote_change_execution_remains_unreleased(self):
+    def test_remote_change_execution_requires_explicit_authorization(self):
         self.assertEqual(_check_change_execution_gate(ROOT), [])
 
     def test_shipped_examples_match_runtime_contracts(self):

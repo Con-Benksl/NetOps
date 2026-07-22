@@ -9,11 +9,7 @@ from unittest.mock import patch
 
 import netops_core.monitor as monitor_module
 from netops_core.change import (
-    CHANGE_EXECUTION_UNAVAILABLE,
-    _apply_plan_unreleased,
-    _remote_script,
-    _rollback_plan_unreleased,
-    _upload_payloads,
+    CHANGE_AUTHORIZATION_REQUIRED,
     apply_plan,
     rollback_plan,
 )
@@ -35,7 +31,7 @@ def _run(executable: str, arguments: list[str], *, cwd: Path) -> str:
     return completed["stdout"]
 
 
-def _expect_cli_execution_unavailable(
+def _expect_cli_authorization_required(
     executable: str, arguments: list[str], *, cwd: Path
 ) -> None:
     completed = run_command(
@@ -44,10 +40,10 @@ def _expect_cli_execution_unavailable(
         timeout=30,
         capture_limit=1_048_576,
     )
-    if completed["returncode"] != 2 or CHANGE_EXECUTION_UNAVAILABLE not in completed[
+    if completed["returncode"] != 2 or CHANGE_AUTHORIZATION_REQUIRED not in completed[
         "stderr"
     ]:
-        raise RuntimeError("installed change execution CLI did not fail closed")
+        raise RuntimeError("installed change execution CLI did not require authorization")
 
 
 def _expect_cli_monitor_unavailable(
@@ -66,14 +62,14 @@ def _expect_cli_monitor_unavailable(
         raise RuntimeError("installed scheduled-monitor CLI did not fail closed")
 
 
-def _expect_api_execution_unavailable(callback) -> None:
+def _expect_api_authorization_required(callback) -> None:
     try:
         callback()
     except PermissionError as exc:
-        if str(exc) != CHANGE_EXECUTION_UNAVAILABLE:
+        if str(exc) != CHANGE_AUTHORIZATION_REQUIRED:
             raise RuntimeError("installed change API returned an unexpected error") from exc
     else:
-        raise RuntimeError("installed change execution API did not fail closed")
+        raise RuntimeError("installed change execution API did not require authorization")
 
 
 def _expect_monitor_api_unavailable(callback) -> None:
@@ -203,56 +199,29 @@ def main() -> int:
                 raise RuntimeError("installed curated-tool catalog is incomplete")
             apply_receipt = cwd / "apply.receipt.json"
             rollback_receipt = cwd / "rollback.receipt.json"
-            _expect_api_execution_unavailable(
+            _expect_api_authorization_required(
                 lambda: apply_plan(
                     cwd / "missing-plan.json",
                     {},
+                    authorized=False,
                     confirmed_plan_id="not-a-plan",
+                    current_control_channel={},
                     receipt_path=apply_receipt,
                 )
             )
-            _expect_api_execution_unavailable(
-                lambda: _remote_script({}, "true", timeout=1)
-            )
-            _expect_api_execution_unavailable(
-                lambda: _apply_plan_unreleased(
-                    cwd / "missing-plan.json",
-                    {},
-                    authorized=True,
-                    confirmed_plan_id="not-a-plan",
-                )
-            )
-            _expect_api_execution_unavailable(
-                lambda: _upload_payloads(
-                    {},
-                    {},
-                    execution_id="invalid",
-                    backup_dir="invalid",
-                )
-            )
-            _expect_api_execution_unavailable(
+            _expect_api_authorization_required(
                 lambda: rollback_plan(
                     cwd / "missing-plan.json",
                     {},
                     backup_dir="not-a-backup",
+                    authorized=False,
                     confirmed_plan_id="not-a-plan",
                     apply_receipt_path=cwd / "missing-apply.receipt.json",
                     current_control_channel={},
                     receipt_path=rollback_receipt,
                 )
             )
-            _expect_api_execution_unavailable(
-                lambda: _rollback_plan_unreleased(
-                    cwd / "missing-plan.json",
-                    {},
-                    backup_dir="not-a-backup",
-                    authorized=True,
-                    confirmed_plan_id="not-a-plan",
-                    apply_receipt_path=cwd / "missing-apply.receipt.json",
-                    current_control_channel={},
-                )
-            )
-            _expect_cli_execution_unavailable(
+            _expect_cli_authorization_required(
                 executable,
                 [
                     "change",
@@ -261,6 +230,8 @@ def main() -> int:
                     str(cwd / "missing-plan.json"),
                     "--fleet",
                     str(cwd / "missing-fleet.json"),
+                    "--current-control-channel",
+                    str(cwd / "missing-control.json"),
                     "--confirm-plan-id",
                     "not-a-plan",
                     "--receipt",
@@ -268,7 +239,7 @@ def main() -> int:
                 ],
                 cwd=cwd,
             )
-            _expect_cli_execution_unavailable(
+            _expect_cli_authorization_required(
                 executable,
                 [
                     "change",
@@ -291,7 +262,7 @@ def main() -> int:
                 cwd=cwd,
             )
             if apply_receipt.exists() or rollback_receipt.exists():
-                raise RuntimeError("unreleased change execution created a receipt")
+                raise RuntimeError("unauthorized change execution created a receipt")
             _check_monitor_api_gates(executable, cwd=cwd)
             monitor = parse_json_strict(
                 _run(
@@ -352,7 +323,7 @@ def main() -> int:
         print(f"installed smoke failed: {exc}", file=sys.stderr)
         return 1
     print(
-        "installed smoke: arbitrary-cwd CLI, catalog, unreleased change and "
+        "installed smoke: arbitrary-cwd CLI, catalog, change authorization and "
         "scheduled-monitor gates, and monitor dry-run plans passed"
     )
     return 0

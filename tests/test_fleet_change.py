@@ -3,20 +3,26 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from netops_core import CHANGE_SCHEMA_VERSION
 from netops_core.change import (
     _active_change_lease,
     _automatic_rollback_script,
     _backup,
     _disarm_automatic_rollback,
     _preflight_command,
+    _REMOTE_METADATA_PROGRAM,
+    _REMOTE_SQLITE_PROGRAM,
     _remote_script,
     _safe_remote_output,
     _upload_payloads,
@@ -41,10 +47,9 @@ ARCHIVE_VALIDATION_TOOLS = (
     "cmp",
     "cp",
     "cut",
-    "getfacl",
-    "getfattr",
     "mktemp",
     "mv",
+    "python3",
     "pwd",
     "sed",
     "sha256sum",
@@ -84,12 +89,12 @@ def safe_control_channel():
     }
 
 
-def fresh_rollback_access_evidence():
+def fresh_rollback_access_evidence(control_channel=None):
     return {
         "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace(
             "+00:00", "Z"
         ),
-        "control_channel": safe_control_channel()["control_channel"],
+        "control_channel": control_channel or safe_control_channel()["control_channel"],
     }
 
 
@@ -138,12 +143,24 @@ def exact_file_preflight(path="/etc/test.json"):
     }
 
 
+def sqlite_query_preflight(path="/etc/x-ui/x-ui.db"):
+    return {
+        "phase": "preflight",
+        "description": "confirm stable SQLite configuration state",
+        "check": "sqlite-query-sha256",
+        "target": path,
+        "query": "SELECT id, remark FROM inbounds ORDER BY id",
+        "sha256": "c" * 64,
+        "metadata_sha256": "d" * 64,
+    }
+
+
 class FleetAndChangeTests(unittest.TestCase):
     def _base_spec(self, root: Path):
         payload = root / "payload.json"
         payload.write_text('{"ok": true}\n', encoding="utf-8")
         return {
-            "schema_version": "2.0",
+            "schema_version": CHANGE_SCHEMA_VERSION,
             "name": "adversarial-test",
             "summary": "exercise the controlled change contract",
             "host_alias": "edge-a",
@@ -317,7 +334,7 @@ class FleetAndChangeTests(unittest.TestCase):
         self.assertNotIn("sensitive-value", command)
         self.assertEqual(env["SSHPASS"], "sensitive-value")
 
-    def test_change_plan_is_hashed_and_execution_is_unreleased(self):
+    def test_change_plan_is_hashed_and_execution_requires_authorization(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             payload = root / "payload.json"
@@ -325,7 +342,7 @@ class FleetAndChangeTests(unittest.TestCase):
             fleet_path = root / "fleet.json"
             fleet_path.write_text(json.dumps(fleet_data()), encoding="utf-8")
             spec = {
-                "schema_version": "2.0",
+                "schema_version": CHANGE_SCHEMA_VERSION,
                 "name": "test",
                 "summary": "test controlled plan",
                 "host_alias": "edge-a",
@@ -369,14 +386,20 @@ class FleetAndChangeTests(unittest.TestCase):
                 "netops_core.change._reserve_new_local_file"
             ) as reserve:
                 for current_fleet in (fleet, changed_fleet):
-                    with self.subTest(host=current_fleet["hosts"][0]["management"]["address"]), self.assertRaisesRegex(
-                        PermissionError, "unavailable in this release"
-                    ):
-                        apply_plan(
-                            plan_path,
-                            current_fleet,
-                            confirmed_plan_id=plan["plan_id"],
-                        )
+                    for authorization in (False, None, 0, "false"):
+                        with self.subTest(
+                            host=current_fleet["hosts"][0]["management"]["address"],
+                            authorization=authorization,
+                        ), self.assertRaisesRegex(
+                            PermissionError, "requires explicit authorization"
+                        ):
+                            apply_plan(
+                                plan_path,
+                                current_fleet,
+                                authorized=authorization,
+                                confirmed_plan_id=plan["plan_id"],
+                                current_control_channel={},
+                            )
                 remote.assert_not_called()
                 reserve.assert_not_called()
 
@@ -385,12 +408,13 @@ class FleetAndChangeTests(unittest.TestCase):
                 "netops_core.change._reserve_new_local_file"
             ) as reserve:
                 with self.assertRaisesRegex(
-                    PermissionError, "unavailable in this release"
+                    PermissionError, "requires explicit authorization"
                 ):
                     rollback_plan(
                         root / "missing-plan.json",
                         {},
                         backup_dir="not-a-backup",
+                        authorized=False,
                         confirmed_plan_id="not-a-plan",
                         apply_receipt_path=root / "missing-apply-receipt.json",
                         current_control_channel={},
@@ -408,7 +432,7 @@ class FleetAndChangeTests(unittest.TestCase):
             fleet_path = root / "fleet.json"
             fleet_path.write_text(json.dumps(fleet_data()), encoding="utf-8")
             spec = {
-                "schema_version": "2.0",
+                "schema_version": CHANGE_SCHEMA_VERSION,
                 "name": "test",
                 "summary": "test",
                 "host_alias": "edge-a",
@@ -494,12 +518,11 @@ class FleetAndChangeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "control or format"):
                 load_plan(plan_path)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_change_apply_blocks_unknown_control_channel_before_ssh(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             spec = {
-                "schema_version": "2.0",
+                "schema_version": CHANGE_SCHEMA_VERSION,
                 "name": "blocked",
                 "summary": "missing control path evidence",
                 "host_alias": "edge-a",
@@ -534,14 +557,54 @@ class FleetAndChangeTests(unittest.TestCase):
                     fleet_data(),
                     authorized=True,
                     confirmed_plan_id=plan["plan_id"],
+                    current_control_channel=fresh_rollback_access_evidence(
+                        plan["control_channel"]
+                    ),
                 )
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
+    def test_change_apply_requires_fresh_matching_control_channel_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            spec_path = root / "spec.json"
+            spec_path.write_text(
+                json.dumps(self._base_spec(root)), encoding="utf-8"
+            )
+            plan_path = root / "plan.json"
+            plan = create_plan(spec_path, fleet_data(), plan_path)
+            stale = {
+                "observed_at": "2020-01-01T00:00:00Z",
+                "control_channel": plan["control_channel"],
+            }
+            changed = fresh_rollback_access_evidence(
+                {
+                    **plan["control_channel"],
+                    "evidence": ["different current management-path evidence"],
+                }
+            )
+            with patch("netops_core.change._remote_script") as remote:
+                with self.assertRaisesRegex(ValueError, "older than 15 minutes"):
+                    apply_plan(
+                        plan_path,
+                        fleet_data(),
+                        authorized=True,
+                        confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=stale,
+                    )
+                with self.assertRaisesRegex(ValueError, "differs from the reviewed plan"):
+                    apply_plan(
+                        plan_path,
+                        fleet_data(),
+                        authorized=True,
+                        confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=changed,
+                    )
+            remote.assert_not_called()
+
     def test_shared_path_arms_and_disarms_remote_rollback(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             spec = {
-                "schema_version": "2.0",
+                "schema_version": CHANGE_SCHEMA_VERSION,
                 "name": "guarded",
                 "summary": "restart a shared remote proxy service",
                 "host_alias": "edge-a",
@@ -598,10 +661,17 @@ class FleetAndChangeTests(unittest.TestCase):
                     fleet_data(),
                     authorized=True,
                     confirmed_plan_id=plan["plan_id"],
+                    current_control_channel=fresh_rollback_access_evidence(
+                        plan["control_channel"]
+                    ),
                     receipt_path=root / "receipt.json",
                 )
             phases = [item["phase"] for item in receipt["steps"]]
             self.assertEqual(receipt["status"], "applied")
+            self.assertEqual(
+                receipt["current_control_channel"]["control_channel"],
+                plan["control_channel"],
+            )
             self.assertRegex(
                 receipt["backup_dir"],
                 rf"/{plan['plan_id']}/[0-9a-f]{{12}}$",
@@ -755,7 +825,6 @@ class FleetAndChangeTests(unittest.TestCase):
         self.assertNotIn("\x1b", sanitized)
         self.assertNotIn("\x07", sanitized)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_plan_and_receipts_are_new_files_and_never_alias_reviewed_input(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -785,6 +854,9 @@ class FleetAndChangeTests(unittest.TestCase):
                         fleet_data(),
                         authorized=True,
                         confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            plan["control_channel"]
+                        ),
                         receipt_path=apply_receipt,
                     )
             remote.assert_not_called()
@@ -815,12 +887,11 @@ class FleetAndChangeTests(unittest.TestCase):
                 rollback_receipt.read_text(encoding="utf-8"), "do not overwrite"
             )
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_disconnect_after_arming_is_recorded_as_rollback_pending(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             spec = {
-                "schema_version": "2.0",
+                "schema_version": CHANGE_SCHEMA_VERSION,
                 "name": "disconnect",
                 "summary": "simulate a lost shared control path",
                 "host_alias": "edge-a",
@@ -901,6 +972,9 @@ class FleetAndChangeTests(unittest.TestCase):
                         fleet_data(),
                         authorized=True,
                         confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            plan["control_channel"]
+                        ),
                         receipt_path=receipt_path,
                     )
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -931,6 +1005,21 @@ class FleetAndChangeTests(unittest.TestCase):
             normalized = validate_change_spec(spec, source_dir=root)
             self.assertNotIn("command", normalized["operations"][0])
             self.assertEqual(normalized["operations"][0]["check"], "file-exists")
+
+            spec = self._base_spec(root)
+            spec["operations"][0] = sqlite_query_preflight("/etc/test.json")
+            normalized = validate_change_spec(spec, source_dir=root)
+            self.assertEqual(
+                normalized["operations"][0]["check"], "sqlite-query-sha256"
+            )
+            self.assertEqual(
+                normalized["rollback_contract"]["preflight_hashes"][0]["query"],
+                sqlite_query_preflight("/etc/test.json")["query"],
+            )
+
+            spec["operations"][0]["query"] = "UPDATE inbounds SET remark = 'bad'"
+            with self.assertRaisesRegex(ValueError, "must start with SELECT"):
+                validate_change_spec(spec, source_dir=root)
 
     def test_change_contract_rejects_boolean_timeouts_and_non_list_services(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1089,7 +1178,6 @@ class FleetAndChangeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "executable rollback"):
                 validate_change_spec(spec, source_dir=root)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_guard_is_armed_before_any_declared_mutation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1147,6 +1235,9 @@ class FleetAndChangeTests(unittest.TestCase):
                     fleet_data(),
                     authorized=True,
                     confirmed_plan_id=plan["plan_id"],
+                    current_control_channel=fresh_rollback_access_evidence(
+                        plan["control_channel"]
+                    ),
                     receipt_path=root / "receipt.json",
                 )
             self.assertEqual(receipt["status"], "applied")
@@ -1222,11 +1313,11 @@ class FleetAndChangeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     ssh_invocation(fleet["hosts"][0])
 
-    def test_payload_upload_sink_is_unavailable_before_local_or_remote_io(self):
+    def test_payload_upload_sink_validates_and_uses_controlled_transports(self):
         with tempfile.TemporaryDirectory() as temporary:
             payload_path = Path(temporary) / "payload"
             payload_path.write_text("payload", encoding="utf-8")
-            digest = "c" * 64
+            digest = hashlib.sha256(payload_path.read_bytes()).hexdigest()
             plan = {
                 "plan_id": "a" * 32,
                 "backup_root": "/var/backups/netops",
@@ -1252,21 +1343,27 @@ class FleetAndChangeTests(unittest.TestCase):
                     }
                 ],
             }
-            with patch("netops_core.change.run_command") as run, patch(
-                "netops_core.change._remote_script"
-            ) as remote, self.assertRaisesRegex(
-                PermissionError, "unavailable in this release"
-            ):
-                _upload_payloads(
+            success = {
+                "returncode": 0,
+                "stdout": "",
+                "stderr": "",
+                "duration_ms": 1,
+            }
+            with patch(
+                "netops_core.change.run_command", return_value=success
+            ) as run, patch(
+                "netops_core.change._remote_script", return_value=success
+            ) as remote:
+                result = _upload_payloads(
                     plan,
                     fleet_data()["hosts"][0],
                     execution_id="b" * 12,
                     backup_dir=f"/var/backups/netops/{'a' * 32}/{'b' * 12}",
                 )
-            run.assert_not_called()
-            remote.assert_not_called()
+            self.assertTrue(result)
+            run.assert_called_once()
+            self.assertGreaterEqual(remote.call_count, 3)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_remote_output_is_redacted_in_exception_and_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1307,13 +1404,15 @@ class FleetAndChangeTests(unittest.TestCase):
                         fleet_data(),
                         authorized=True,
                         confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            plan["control_channel"]
+                        ),
                         receipt_path=receipt_path,
                     )
             receipt_text = receipt_path.read_text(encoding="utf-8")
             self.assertNotIn("SUPERSECRET", str(raised.exception))
             self.assertNotIn("SUPERSECRET", receipt_text)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_payload_cleanup_failure_preserves_root_cause_and_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1357,6 +1456,9 @@ class FleetAndChangeTests(unittest.TestCase):
                         fleet_data(),
                         authorized=True,
                         confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            plan["control_channel"]
+                        ),
                         receipt_path=receipt_path,
                     )
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -1366,7 +1468,6 @@ class FleetAndChangeTests(unittest.TestCase):
             )
             self.assertEqual(receipt["status"], "rolled-back")
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_manual_rollback_does_not_require_local_apply_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1386,6 +1487,9 @@ class FleetAndChangeTests(unittest.TestCase):
                         fleet_data(),
                         authorized=True,
                         confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            plan["control_channel"]
+                        ),
                         receipt_path=root / "apply-receipt.json",
                     )
             remote.assert_not_called()
@@ -1417,7 +1521,6 @@ class FleetAndChangeTests(unittest.TestCase):
             self.assertEqual(receipt["status"], "rolled-back")
             self.assertGreaterEqual(remote.call_count, 1)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_manual_rollback_rechecks_guard_and_writes_failure_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1457,7 +1560,6 @@ class FleetAndChangeTests(unittest.TestCase):
             self.assertEqual(receipt["status"], "blocked")
             self.assertEqual(receipt["control_channel_guard"]["decision"], "block")
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_manual_rollback_remote_failure_is_receipted_and_redacted(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1494,7 +1596,6 @@ class FleetAndChangeTests(unittest.TestCase):
             self.assertNotIn("ROLLBACKSECRET", str(raised.exception))
             self.assertNotIn("ROLLBACKSECRET", receipt_text)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_reviewed_prestate_hashes_are_required_and_checked_before_backup(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1512,8 +1613,19 @@ class FleetAndChangeTests(unittest.TestCase):
             command = _preflight_command(operation)
             self.assertIn(operation["sha256"], command)
             self.assertIn(operation["metadata_sha256"], command)
-            self.assertIn("getfattr", command)
+            self.assertIn("python3 -c", command)
+            self.assertIn("os.listxattr", command)
+            self.assertNotIn("getfacl", command)
+            self.assertNotIn("getfattr", command)
             self.assertIn("stat -c %h", command)
+            shell = shutil.which("sh")
+            if shell is not None:
+                subprocess.run(
+                    [shell, "-n"],
+                    input=command,
+                    text=True,
+                    check=True,
+                )
 
             spec = self._base_spec(root)
             spec_path = root / "spec.json"
@@ -1535,11 +1647,190 @@ class FleetAndChangeTests(unittest.TestCase):
                         fleet_data(),
                         authorized=True,
                         confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            plan["control_channel"]
+                        ),
                         receipt_path=root / "stale.receipt.json",
                     )
             backup.assert_not_called()
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
+    def test_remote_metadata_program_detects_mode_and_xattr_changes(self):
+        if not all(
+            hasattr(os, name) for name in ("listxattr", "getxattr", "setxattr")
+        ):
+            self.skipTest("platform does not expose xattr APIs")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            candidate = root / "candidate"
+            source.write_bytes(b"metadata\n")
+            shutil.copy2(source, candidate)
+
+            exact = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    _REMOTE_METADATA_PROGRAM,
+                    "compare",
+                    str(source),
+                    str(candidate),
+                    "exact",
+                ],
+                check=False,
+            )
+            self.assertEqual(exact.returncode, 0)
+
+            candidate.chmod(0o600)
+            exact = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    _REMOTE_METADATA_PROGRAM,
+                    "compare",
+                    str(source),
+                    str(candidate),
+                    "exact",
+                ],
+                check=False,
+            )
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    _REMOTE_METADATA_PROGRAM,
+                    "compare",
+                    str(source),
+                    str(candidate),
+                    "install",
+                ],
+                check=False,
+            )
+            self.assertNotEqual(exact.returncode, 0)
+            self.assertEqual(install.returncode, 0)
+
+            try:
+                os.setxattr(candidate, "user.netops-test", b"changed")
+            except OSError:
+                return
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    _REMOTE_METADATA_PROGRAM,
+                    "compare",
+                    str(source),
+                    str(candidate),
+                    "install",
+                ],
+                check=False,
+            )
+            self.assertNotEqual(install.returncode, 0)
+
+    def test_remote_sqlite_program_hashes_stable_query_and_creates_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "live.db"
+            snapshot = root / "snapshot.db"
+            with closing(sqlite3.connect(source)) as connection:
+                with connection:
+                    connection.executescript(
+                        "CREATE TABLE config (id INTEGER PRIMARY KEY, value TEXT);"
+                        "CREATE TABLE traffic (id INTEGER PRIMARY KEY, total INTEGER);"
+                        "INSERT INTO config VALUES (1, 'kept');"
+                        "INSERT INTO traffic VALUES (1, 10);"
+                    )
+            query = "SELECT id, value FROM config ORDER BY id"
+
+            def digest() -> str:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        _REMOTE_SQLITE_PROGRAM,
+                        "digest",
+                        str(source),
+                        query,
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                return result.stdout.strip()
+
+            reviewed = digest()
+            encoded_rows = json.dumps(
+                [[["integer", 1], ["text", "kept"]]],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            self.assertEqual(reviewed, hashlib.sha256(encoded_rows).hexdigest())
+            with closing(sqlite3.connect(source)) as connection:
+                with connection:
+                    connection.execute("UPDATE traffic SET total = total + 1")
+            self.assertEqual(digest(), reviewed)
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    _REMOTE_SQLITE_PROGRAM,
+                    "backup",
+                    str(source),
+                    str(snapshot),
+                ],
+                check=True,
+            )
+            with closing(sqlite3.connect(snapshot)) as connection:
+                self.assertEqual(
+                    connection.execute("PRAGMA integrity_check").fetchone(), ("ok",)
+                )
+                self.assertEqual(
+                    connection.execute("SELECT total FROM traffic").fetchone(), (11,)
+                )
+
+            with closing(sqlite3.connect(source)) as connection:
+                with connection:
+                    connection.execute("UPDATE config SET value = 'changed'")
+            self.assertNotEqual(digest(), reviewed)
+
+    def test_sqlite_backup_uses_online_snapshot_and_stable_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            spec = self._base_spec(root)
+            spec["backup_paths"] = ["/etc/x-ui/x-ui.db"]
+            spec["payloads"] = []
+            spec["operations"][0] = sqlite_query_preflight()
+            spec["operations"].insert(
+                1,
+                {
+                    "phase": "apply",
+                    "description": "merge one inbound transactionally",
+                    "command": "true",
+                    "affected_paths": ["/etc/x-ui/x-ui.db"],
+                },
+            )
+            spec_path = root / "sqlite-spec.json"
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+            plan = create_plan(spec_path, fleet_data(), root / "sqlite-plan.json")
+            success = {
+                "returncode": 0,
+                "stdout": BACKUP_INTEGRITY_STDOUT,
+                "stderr": "",
+                "duration_ms": 1,
+            }
+            with patch(
+                "netops_core.change._remote_script", return_value=success
+            ) as remote:
+                _backup(plan, fleet_data()["hosts"][0], execution_id="e" * 12)
+            script = remote.call_args.args[1]
+            self.assertIn("source.backup(destination)", script)
+            self.assertIn("cp --attributes-only --preserve=all", script)
+            self.assertIn("verify_file_stable_metadata", script)
+            self.assertIn(sqlite_query_preflight()["query"], script)
+            shell = shutil.which("sh")
+            if shell is not None:
+                subprocess.run([shell, "-n"], input=script, text=True, check=True)
+
     def test_plan_id_binds_review_metadata_and_apply_rejects_stale_plan(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1564,11 +1855,13 @@ class FleetAndChangeTests(unittest.TestCase):
                         fleet_data(),
                         authorized=True,
                         confirmed_plan_id=data["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            data["control_channel"]
+                        ),
                         receipt_path=root / "old.receipt.json",
                     )
             remote.assert_not_called()
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_arm_or_mark_failure_never_runs_rollback_before_target_mutation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1636,6 +1929,9 @@ class FleetAndChangeTests(unittest.TestCase):
                             fleet_data(),
                             authorized=True,
                             confirmed_plan_id=plan["plan_id"],
+                            current_control_channel=fresh_rollback_access_evidence(
+                                plan["control_channel"]
+                            ),
                             receipt_path=receipt_path,
                         )
                     restore.assert_not_called()
@@ -1666,8 +1962,10 @@ class FleetAndChangeTests(unittest.TestCase):
             self.assertIn("set -C", script)
             self.assertIn("BACKUP_READY=1", script)
             self.assertIn("stat -c %h", script)
-            self.assertIn("getfattr --absolute-names --dump -m -", script)
-            self.assertIn("stat -c '%u:%g:%a:%y:%C'", script)
+            self.assertIn("python3 -c", script)
+            self.assertIn("os.listxattr", script)
+            self.assertNotIn("getfacl", script)
+            self.assertNotIn("getfattr", script)
             self.assertIn("cp --preserve=all --no-dereference", script)
             validator = _validated_archive_script(
                 plan,
@@ -1714,7 +2012,6 @@ class FleetAndChangeTests(unittest.TestCase):
         )
         self.assertIn("release_active_lease", script)
 
-    @unittest.skip("remote transaction executor is intentionally unreleased")
     def test_shared_plan_manual_rollback_uses_fresh_independent_evidence_and_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1775,16 +2072,23 @@ class FleetAndChangeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "config_host"):
                 create_plan(spec_path, fleet, root / "plan.json")
 
-    def test_internal_remote_shell_sink_is_unavailable_before_ssh_resolution(self):
+    def test_internal_remote_shell_sink_uses_validated_ssh_transport(self):
         host = fleet_data()["hosts"][0]
+        success = {
+            "returncode": 0,
+            "stdout": "ok",
+            "stderr": "",
+            "duration_ms": 1,
+        }
         with patch(
-            "netops_core.change.ssh_invocation"
-        ) as ssh, patch("netops_core.change.run_command") as run, self.assertRaisesRegex(
-            PermissionError, "unavailable in this release"
-        ):
-            _remote_script(host, "true", timeout=10)
-        ssh.assert_not_called()
-        run.assert_not_called()
+            "netops_core.change.ssh_invocation", return_value=(["ssh", "edge-a"], {})
+        ) as ssh, patch(
+            "netops_core.change.run_command", return_value=success
+        ) as run:
+            result = _remote_script(host, "true", timeout=10)
+        self.assertEqual(result, success)
+        ssh.assert_called_once_with(host)
+        run.assert_called_once()
 
     def test_change_spec_rejects_unknown_fields_limits_and_secret_commands(self):
         with tempfile.TemporaryDirectory() as temporary:

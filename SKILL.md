@@ -23,13 +23,13 @@ Follow `references/guided-dialogue.md` for every workflow.
 - Use `request_user_input` or another structured question tool when available so choices are clickable. Otherwise show a short numbered list in Chinese.
 - Ask at most three questions per turn, with 2–3 mutually exclusive choices per question. Put the recommended choice first and explain the impact of every option.
 - When the request is already clear, route or act without forcing the user through a menu.
-- A menu choice can select `read-only scan`, `plan only`, or `review and hand off`. This release never executes the remote plan itself.
+- A menu choice can select `read-only scan`, `plan only`, or `review and execute`. Execution still requires one final confirmation of the exact remote operation after impact and rollback details are shown; the user is not asked to copy remote Linux commands that Codex can run safely over SSH.
 
 For an ambiguous request such as “帮我看看这台 VPS”, offer a context-appropriate version of:
 
 1. `先只读检查（推荐）`: collect environment facts without changing the device.
 2. `排查当前故障`: collect evidence around a specific symptom and time window.
-3. `搭建或修改`: audit the live state and prepare a reviewable plan before any write.
+3. `搭建或修改`: audit the live state and prepare a reviewable SSH transaction or exact plan before any write.
 
 After the user chooses, acknowledge the choice and its boundary in one sentence, then proceed. Explain unfamiliar terms just in time instead of giving a networking lecture first.
 
@@ -37,11 +37,11 @@ After the user chooses, acknowledge the choice and its boundary in one sentence,
 
 Before any action that can restart a proxy, take over TUN, or change DNS, routes, firewall rules, a node, or a VPS carrying Codex traffic, follow `references/control-channel-safety.md`.
 
-1. Determine whether Codex currently depends on any component being changed. Scanner clues do not prove the dependency by themselves.
-2. If the relationship is unknown, allow only read-only scans, explanations, and plan generation.
-3. This release does not perform automated mutation or automatic rollback, even when an independent path is verified.
-4. Independent access and manual recovery readiness remain required review evidence for any separately operated change.
-5. When the user must act, give one action at a time with its purpose, exact operation, expected result, failure handling, undo path, and requested reply.
+1. Determine whether the change touches the local Mac control plane, the node/VPS currently carrying Codex traffic, or an unrelated remote VPS. Scanner clues do not prove the dependency by themselves.
+2. For an unrelated remote VPS with no local-network change, allow authorized direct SSH execution. Codex performs the backup, Linux commands, validation, verification, and rollback; do not hand those commands to the user merely because they are writes.
+3. If a remote target may carry Codex traffic, resolve the dependency. A shared path needs a verified independent path or an automatic rollback contract before a disruptive restart or network change.
+4. Local TUN, system proxy, active proxy process, DNS, route, or firewall switching that could cut off Codex remains a manual user action. Guide only that local switch one step at a time, then continue the remote work automatically.
+5. Before any authorized remote write, show affected components, unchanged invariants, expected interruption, failure consequences, backup, rollback, and verification. Use a plan ID when the exact-plan executor is used; otherwise confirm the exact SSH transaction summary.
 6. If connectivity is lost, prioritize the emergency steps that restore a known-good path and restart Codex before continuing diagnosis.
 
 ## Route To One Workflow
@@ -62,7 +62,8 @@ If one request spans workflows, select the workflow that produces the next neces
 - A traceroute, ASN lookup, or public-IP service is evidence from one vantage point, not a complete physical route.
 - Curated external tools are optional adapters, not trusted conclusions. Inspect `netopsctl tools status`, explain what data leaves the device, and obtain separate consent for external queries and load tests.
 - Never download or run an unpinned `latest` script through a shell pipeline. Prefer an installed package or a reviewed official release and record its version or commit.
-- `netopsctl` may generate and review a remote change plan, but this release must not execute or roll it back; `change apply` and `change rollback` fail closed unconditionally, and no override exists.
+- Authorized direct SSH is allowed for an unrelated remote VPS when the operation does not change the local control plane or a remote path carrying Codex traffic. Back up affected state, validate before apply, verify new and preserved behavior, roll back on failure, and keep a concise receipt of commands and results.
+- Use the exact-plan executor when its file-transaction contract fits the change or when a shared remote path needs automatic rollback. It is a safety tool, not a blanket ban on direct SSH.
 - Scheduled monitor installation/removal is also unreleased. Only dry-run review material and owned-file integrity status are available; do not copy scheduler commands from a preview.
 - Never restart or rewrite the active Codex network path until the control-channel gate has returned an allow decision.
 - A purchased "IP" may be an authenticated SOCKS/HTTP upstream rather than an address assigned to the VPS. Classify it before changing routing.
@@ -79,4 +80,4 @@ If one request spans workflows, select the workflow that produces the next neces
 - Codex control-channel safety and emergency recovery: `references/control-channel-safety.md`
 - Run the helper without assuming the current directory: use an installed `netopsctl`, or resolve this Skill directory and run `python3 <skill-root>/scripts/netopsctl.py --help`.
 
-The helper is a data collector and change-plan reviewer. Its remote executor is not released; it does not replace judgment, authorization, or end-to-end verification.
+The helper is a data collector and controlled-change executor. Codex may also perform authorized direct SSH transactions under the same backup and verification rules; neither path replaces judgment, authorization, or end-to-end verification.

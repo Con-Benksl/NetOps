@@ -11,16 +11,16 @@ Help a beginner identify their goal without turning the conversation into a netw
 
 Before reading a shared reference, resolve `<reference-root>` once. Use `../../references` when `../../references/guided-dialogue.md` exists (repository or monolithic root installation); otherwise use `../netops/references` when `../netops/references/guided-dialogue.md` exists (flat installation beside the root `netops` Skill). If neither candidate exists, stop and report an incomplete installation. Do not reconstruct or bypass missing safety rules.
 
-## Remote Execution Release Boundary
+## Workflow Boundary
 
-This release stops at audit, plan, and review handoff. Do not call `change apply`, `change rollback`, SSH mutation, or any hidden execution path. Route build, repair, and maintenance requests to a reviewable plan without claiming that a remote write or rollback occurred.
+This onboarding workflow does not mutate systems itself. Route build, repair, and maintenance requests to the matching workflow. An unrelated remote VPS may be changed by Codex through authorized direct SSH with backup and rollback; local or shared control-path changes require the stronger control-channel gate and, when needed, an exact plan.
 
 ## Guided Choices
 
 Follow `<reference-root>/guided-dialogue.md`. If the user does not yet know what to ask, start with one short choice:
 
 1. `先做只读体检（推荐）`: discover the current device and VPS state without changing anything.
-2. `搭建或修改节点`: explain the required pieces, then hand off to an audit and change plan.
+2. `搭建或修改节点`: explain the required pieces, then hand off to an audited change that can be executed after confirmation.
 3. `解决正在遇到的问题`: identify the symptom and collect evidence from the failing path.
 
 If the user asks for more or less explanation, offer `边做边解释（推荐）`, `先看结论`, or `深入原理`. Do not ask both question sets unless both decisions are actually needed. If the goal is already clear, explain the first unfamiliar term and route immediately without showing a menu.

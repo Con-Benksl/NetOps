@@ -18,8 +18,10 @@ from typing import Any
 from . import __version__
 from .bundle import export_bundle, inspect_bundle
 from .change import (
-    CHANGE_EXECUTION_UNAVAILABLE,
+    CHANGE_AUTHORIZATION_REQUIRED,
+    apply_plan,
     create_plan,
+    rollback_plan,
     resolve_apply_receipt_path,
     resolve_rollback_receipt_path,
 )
@@ -629,7 +631,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     change = commands.add_parser(
         "change",
-        help="Plan a controlled remote change; execution is unavailable in this release",
+        help="Plan, apply, or roll back a controlled remote change",
     )
     change_modes = change.add_subparsers(dest="change_mode", required=True)
     change_plan = change_modes.add_parser("plan", help="Normalize and hash a change spec")
@@ -638,15 +640,29 @@ def build_parser() -> argparse.ArgumentParser:
     change_plan.add_argument("--output", required=True)
 
     change_apply = change_modes.add_parser(
-        "apply", help="Unavailable in this release; always fails closed"
+        "apply",
+        help="Apply an authorized, reviewed change plan",
+        allow_abbrev=False,
     )
     change_apply.add_argument("--plan", required=True)
     change_apply.add_argument("--fleet", required=True)
     change_apply.add_argument("--confirm-plan-id", required=True)
+    change_apply.add_argument(
+        "--current-control-channel",
+        required=True,
+        help="JSON evidence observed within 15 minutes and matching the reviewed plan",
+    )
+    change_apply.add_argument(
+        "--authorized",
+        action="store_true",
+        help="Confirm that the reviewed plan ID and stated impact were explicitly approved",
+    )
     change_apply.add_argument("--receipt")
 
     change_rollback = change_modes.add_parser(
-        "rollback", help="Unavailable in this release; always fails closed"
+        "rollback",
+        help="Roll back a prior authorized change",
+        allow_abbrev=False,
     )
     change_rollback.add_argument("--plan", required=True)
     change_rollback.add_argument("--fleet", required=True)
@@ -662,6 +678,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fresh JSON evidence for the currently independent rollback path",
     )
     change_rollback.add_argument("--confirm-plan-id", required=True)
+    change_rollback.add_argument(
+        "--authorized",
+        action="store_true",
+        help="Confirm that rollback of the reviewed plan was explicitly approved",
+    )
     change_rollback.add_argument("--receipt")
     return parser
 
@@ -856,13 +877,48 @@ def execute(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "change":
-        if args.change_mode != "plan":
-            # Reject before fleet/plan/evidence reads, receipt reservation, or
-            # any transport call.  There is deliberately no override.
-            raise PermissionError(CHANGE_EXECUTION_UNAVAILABLE)
-        _require_new_output(args.output, label="change plan")
-        fleet = load_fleet(args.fleet)
-        _json(create_plan(args.spec, fleet, args.output))
+        if args.change_mode == "plan":
+            _require_new_output(args.output, label="change plan")
+            fleet = load_fleet(args.fleet)
+            _json(create_plan(args.spec, fleet, args.output))
+        elif args.change_mode == "apply":
+            if not args.authorized:
+                raise PermissionError(CHANGE_AUTHORIZATION_REQUIRED)
+            current_control_channel = load_json_limited(
+                args.current_control_channel,
+                max_bytes=1_048_576,
+            )
+            fleet = load_fleet(args.fleet)
+            _json(
+                apply_plan(
+                    args.plan,
+                    fleet,
+                    authorized=args.authorized,
+                    confirmed_plan_id=args.confirm_plan_id,
+                    current_control_channel=current_control_channel,
+                    receipt_path=args.receipt,
+                )
+            )
+        else:
+            if not args.authorized:
+                raise PermissionError(CHANGE_AUTHORIZATION_REQUIRED)
+            fleet = load_fleet(args.fleet)
+            current_control_channel = load_json_limited(
+                args.current_control_channel,
+                max_bytes=1_048_576,
+            )
+            _json(
+                rollback_plan(
+                    args.plan,
+                    fleet,
+                    backup_dir=args.backup_dir,
+                    authorized=args.authorized,
+                    confirmed_plan_id=args.confirm_plan_id,
+                    apply_receipt_path=args.apply_receipt,
+                    current_control_channel=current_control_channel,
+                    receipt_path=args.receipt,
+                )
+            )
         return 0
     raise RuntimeError("unhandled command")
 
@@ -879,14 +935,13 @@ def main(argv: list[str] | None = None) -> int:
         if captured:
             _stderr(_sanitize_argparse_error(captured))
         return int(exc.code or 0)
-    unreleased_change = (
+    unauthorized_change = (
         getattr(args, "command", None) == "change"
         and getattr(args, "change_mode", None) in {"apply", "rollback"}
+        and not getattr(args, "authorized", False)
     )
-    # The unreleased execution gate must precede even local receipt-path
-    # resolution and existence probes, not only plan reads and remote I/O.
     receipt_destination = (
-        None if unreleased_change else _change_receipt_destination(args)
+        None if unauthorized_change else _change_receipt_destination(args)
     )
     receipt_existed_before = bool(
         receipt_destination is not None and os.path.lexists(receipt_destination)
@@ -899,7 +954,7 @@ def main(argv: list[str] | None = None) -> int:
         _stderr(f"netopsctl: {redactor.text(normalized_error)}")
         context = (
             None
-            if unreleased_change
+            if unauthorized_change
             else _change_failure_context(
                 args, existed_before_execution=receipt_existed_before
             )

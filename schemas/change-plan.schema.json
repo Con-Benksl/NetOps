@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Con-Benksl/NetOps/schemas/change-plan.schema.json",
   "title": "NetOps Reviewed Change Plan",
-  "description": "Review artifact only. NetOps 0.2.0 does not execute or roll back this plan through CLI or Python APIs.",
+  "description": "Immutable reviewed change plan that may be executed only with an allow guard and explicit authorization for its exact plan ID.",
   "type": "object",
   "$defs": {
     "canonicalRemotePath": {
@@ -45,7 +45,7 @@
     "control_channel_guard"
   ],
   "properties": {
-    "schema_version": {"const": "2.0"},
+    "schema_version": {"const": "3.0"},
     "plan_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
     "created_at": {"type": "string"},
     "source_spec": {"type": "string"},
@@ -64,7 +64,7 @@
     },
     "invariants": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/reviewText"}},
     "backup_paths": {
-      "description": "Exact existing file targets with matching typed file-sha256 preflights bound to reviewed remote prestate.",
+      "description": "Exact existing file targets with matching typed file or SQLite preflights bound to reviewed remote prestate.",
       "type": "array",
       "minItems": 1,
       "maxItems": 64,
@@ -124,6 +124,7 @@
                   "path-exists",
                   "file-exists",
                   "file-sha256",
+                  "sqlite-query-sha256",
                   "directory-exists",
                   "command-exists",
                   "service-exists",
@@ -133,6 +134,7 @@
               "target": {"type": "string", "minLength": 1},
               "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
               "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "query": {"type": "string", "minLength": 1, "maxLength": 16384, "pattern": "^\\s*[Ss][Ee][Ll][Ee][Cc][Tt]\\b"},
               "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
             },
             "allOf": [
@@ -140,7 +142,7 @@
                 "if": {
                   "properties": {
                     "check": {
-                      "enum": ["path-exists", "file-exists", "file-sha256", "directory-exists"]
+                      "enum": ["path-exists", "file-exists", "file-sha256", "sqlite-query-sha256", "directory-exists"]
                     }
                   }
                 },
@@ -151,7 +153,7 @@
                 }
               },
               {
-                "if": {"properties": {"check": {"const": "file-sha256"}}},
+                "if": {"properties": {"check": {"enum": ["file-sha256", "sqlite-query-sha256"]}}},
                 "then": {"required": ["sha256", "metadata_sha256"]},
                 "else": {
                   "not": {
@@ -161,6 +163,11 @@
                     ]
                   }
                 }
+              },
+              {
+                "if": {"properties": {"check": {"const": "sqlite-query-sha256"}}},
+                "then": {"required": ["query"]},
+                "else": {"not": {"required": ["query"]}}
               }
             ],
             "additionalProperties": false
@@ -308,14 +315,29 @@
           "minItems": 1,
           "maxItems": 64,
           "items": {
-            "type": "object",
-            "required": ["target", "sha256", "metadata_sha256"],
-            "properties": {
-              "target": {"$ref": "#/$defs/canonicalRemotePath"},
-              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-            },
-            "additionalProperties": false
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["target", "sha256", "metadata_sha256"],
+                "properties": {
+                  "target": {"$ref": "#/$defs/canonicalRemotePath"},
+                  "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["target", "sha256", "metadata_sha256", "query"],
+                "properties": {
+                  "target": {"$ref": "#/$defs/canonicalRemotePath"},
+                  "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                  "query": {"type": "string", "minLength": 1, "maxLength": 16384, "pattern": "^\\s*[Ss][Ee][Ll][Ee][Cc][Tt]\\b"}
+                },
+                "additionalProperties": false
+              }
+            ]
           }
         },
         "unverified_targets": {
@@ -343,14 +365,38 @@
         "decision",
         "can_apply",
         "execution_available",
+        "execution_mode",
         "risk",
         "reasons",
         "next_action",
         "emergency_steps"
       ],
       "properties": {
-        "execution_available": {"const": false}
-      }
+        "decision": {"enum": ["allow", "block"]},
+        "can_apply": {"type": "boolean"},
+        "execution_available": {"const": true},
+        "execution_mode": {
+          "enum": [
+            "direct-ssh-or-plan",
+            "exact-plan",
+            "manual-local-control-plane",
+            "read-only"
+          ]
+        },
+        "risk": {"enum": ["blocked", "guarded", "guarded-high"]},
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "next_action": {"type": "string", "minLength": 1},
+        "emergency_steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

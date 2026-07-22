@@ -72,7 +72,8 @@ class SkillContractTests(unittest.TestCase):
     def test_mutating_child_skills_repeat_the_direct_invocation_gate(self):
         required = (
             "## Direct-Invocation Safety",
-            "reviewed exact plan ID",
+            "Authorized direct SSH",
+            "local control plane",
             "explicit authorization",
             "affected-state backup",
             "pre-apply validation",
@@ -85,21 +86,23 @@ class SkillContractTests(unittest.TestCase):
             for phrase in required:
                 self.assertIn(phrase, text)
 
-    def test_every_child_skill_repeats_the_unreleased_remote_execution_boundary(self):
-        required = (
-            "This release stops",
-            "plan",
-            "review handoff",
-            "`change apply`",
-            "`change rollback`",
-            "SSH mutation",
-            "hidden execution path",
-        )
-        for name in EXPECTED:
+    def test_child_skills_have_explicit_read_and_write_boundaries(self):
+        start = (ROOT / "skills/netops-start/SKILL.md").read_text(encoding="utf-8")
+        scan = (ROOT / "skills/netops-scan/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("does not mutate systems itself", start)
+        self.assertIn("strictly read-only", scan)
+        self.assertIn("reviewed SSH transaction summary", scan)
+        self.assertIn("exact plan only when", scan)
+        for name in ("netops-build", "netops-fix", "netops-manage"):
             text = (ROOT / "skills" / name / "SKILL.md").read_text(
                 encoding="utf-8"
             )
-            for phrase in required:
+            for phrase in (
+                "Authorized direct SSH",
+                "explicit authorization",
+                "`netopsctl change apply`",
+                "control-channel-safety.md",
+            ):
                 with self.subTest(skill=name, phrase=phrase):
                     self.assertIn(phrase, text)
 
@@ -107,7 +110,7 @@ class SkillContractTests(unittest.TestCase):
         text = (ROOT / "skills/netops-manage/SKILL.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("Scheduled monitor installation and removal are also unreleased", text)
+        self.assertIn("Scheduled monitor installation and removal remain unreleased", text)
         self.assertIn("may only generate dry-run review material", text)
         self.assertIn("never touch a scheduler", text)
 
@@ -179,6 +182,8 @@ class SkillContractTests(unittest.TestCase):
             "紧急避险卡",
             "重新启动 Codex",
             "人工恢复说明不能代替",
+            "独立远端 VPS",
+            "远端 Linux 命令默认由 Codex",
             "automatic-rollback.status",
         ):
             self.assertIn(required, text)
@@ -191,9 +196,23 @@ class SkillContractTests(unittest.TestCase):
             "推荐项放在第一位",
             "request_user_input",
             "能够通过只读扫描获得",
-            "不能代替对最终计划 ID 的明确授权",
+            "不能代替对最终远程操作的明确授权",
         ):
             self.assertIn(required, text)
+
+    def test_independent_remote_ssh_is_not_blanket_blocked(self):
+        paths = [
+            ROOT / "SKILL.md",
+            *(ROOT / "skills" / name / "SKILL.md" for name in (
+                "netops-build",
+                "netops-fix",
+                "netops-manage",
+            )),
+        ]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+        self.assertIn("Authorized direct SSH", combined)
+        self.assertNotIn("Never use raw SSH", combined)
+        self.assertNotIn("do not use raw SSH", combined)
 
     def test_default_prompts_request_explained_choices(self):
         prompt_paths = [
@@ -226,7 +245,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("--agent codex --full-depth --skill '*'", text)
         self.assertEqual(
             text.count(
-                "git clone --branch v0.2.0 --depth 1 "
+                "git clone --branch v0.3.0 --depth 1 "
                 "https://github.com/Con-Benksl/NetOps.git"
             ),
             2,

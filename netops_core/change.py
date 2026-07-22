@@ -39,12 +39,11 @@ MAX_CHANGE_ITEMS = 64
 MAX_REMOTE_PATH_LENGTH = 4_096
 MAX_PLAN_AGE_SECONDS = 86_400
 MAX_CLOCK_SKEW_SECONDS = 300
-MAX_ROLLBACK_ACCESS_EVIDENCE_AGE_SECONDS = 900
+MAX_CONTROL_CHANNEL_EVIDENCE_AGE_SECONDS = 900
 TRUSTED_REMOTE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 CONTROLLED_BACKUP_ROOT = "/var/backups/netops"
-CHANGE_EXECUTION_UNAVAILABLE = (
-    "remote change execution is unavailable in this release; "
-    "use change plan for read-only review and perform no remote write through netopsctl"
+CHANGE_AUTHORIZATION_REQUIRED = (
+    "remote change execution requires explicit authorization for the reviewed plan ID"
 )
 CHANGE_SPEC_KEYS = {
     "schema_version",
@@ -73,6 +72,7 @@ PREFLIGHT_CHECKS = (
     "path-exists",
     "file-exists",
     "file-sha256",
+    "sqlite-query-sha256",
     "directory-exists",
     "command-exists",
     "service-exists",
@@ -99,6 +99,145 @@ OVERBROAD_BACKUP_PATHS = {
     PurePosixPath(path)
     for path in ("/", "/boot", "/etc", "/home", "/opt", "/root", "/srv", "/tmp", "/usr", "/var")
 }
+
+_REMOTE_METADATA_PROGRAM = r"""
+import base64
+import hashlib
+import json
+import os
+import stat
+import sys
+
+
+def metadata(path):
+    status = os.stat(path, follow_symlinks=False)
+    if not stat.S_ISREG(status.st_mode):
+        raise SystemExit("metadata target is not a regular file")
+    attributes = []
+    for name in sorted(
+        os.listxattr(path, follow_symlinks=False), key=os.fsencode
+    ):
+        encoded_name = os.fsencode(name)
+        value = os.getxattr(path, name, follow_symlinks=False)
+        attributes.append(
+            [
+                base64.b64encode(encoded_name).decode("ascii"),
+                base64.b64encode(value).decode("ascii"),
+            ]
+        )
+    return {
+        "file_type": stat.S_IFMT(status.st_mode),
+        "uid": status.st_uid,
+        "gid": status.st_gid,
+        "mode": stat.S_IMODE(status.st_mode),
+        "mtime_ns": status.st_mtime_ns,
+        "xattrs": attributes,
+    }
+
+
+def selected_metadata(path, profile):
+    values = metadata(path)
+    if profile == "exact":
+        comparable = ("file_type", "uid", "gid", "mode", "mtime_ns", "xattrs")
+    elif profile == "stable":
+        comparable = ("file_type", "uid", "gid", "mode", "xattrs")
+    elif profile == "install":
+        comparable = ("file_type", "uid", "gid", "xattrs")
+    else:
+        raise SystemExit("unsupported metadata comparison profile")
+    return {key: values[key] for key in comparable}
+
+
+action = sys.argv[1]
+if action == "digest":
+    profile = sys.argv[3] if len(sys.argv) > 3 else "exact"
+    encoded = json.dumps(
+        selected_metadata(sys.argv[2], profile),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    print(hashlib.sha256(encoded).hexdigest())
+elif action == "compare":
+    profile = sys.argv[4]
+    source = selected_metadata(sys.argv[2], profile)
+    candidate = selected_metadata(sys.argv[3], profile)
+    if source != candidate:
+        raise SystemExit("file metadata does not match")
+else:
+    raise SystemExit("unsupported metadata action")
+""".strip()
+
+_REMOTE_SQLITE_PROGRAM = r"""
+import base64
+import hashlib
+import json
+import sqlite3
+import sys
+from urllib.parse import quote
+
+
+def read_only(path):
+    uri = "file:" + quote(path, safe="/") + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=30)
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
+def cell(value):
+    if value is None:
+        return ["null", None]
+    if isinstance(value, int):
+        return ["integer", value]
+    if isinstance(value, float):
+        return ["real", value.hex()]
+    if isinstance(value, str):
+        return ["text", value]
+    if isinstance(value, bytes):
+        return ["blob", base64.b64encode(value).decode("ascii")]
+    raise SystemExit("unsupported SQLite result type")
+
+
+def query_digest(path, query):
+    connection = read_only(path)
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    first = True
+    try:
+        for row in connection.execute(query):
+            if not first:
+                digest.update(b",")
+            digest.update(
+                json.dumps(
+                    [cell(value) for value in row],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            first = False
+    finally:
+        connection.close()
+    digest.update(b"]")
+    return digest.hexdigest()
+
+
+action = sys.argv[1]
+if action == "digest":
+    print(query_digest(sys.argv[2], sys.argv[3]))
+elif action == "backup":
+    source = read_only(sys.argv[2])
+    destination = sqlite3.connect(sys.argv[3], timeout=30)
+    try:
+        with destination:
+            source.backup(destination)
+            integrity = [row[0] for row in destination.execute("PRAGMA integrity_check")]
+            if integrity != ["ok"]:
+                raise SystemExit("SQLite backup integrity check failed")
+    finally:
+        destination.close()
+        source.close()
+else:
+    raise SystemExit("unsupported SQLite action")
+""".strip()
 
 
 def _safe_remote_output(value: Any) -> str:
@@ -464,6 +603,24 @@ def _validate_backup_layout(backup_paths: list[str], backup_root: str) -> None:
         )
 
 
+def _normalize_sqlite_query(value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-empty SELECT query")
+    if len(value) > MAX_SHELL_COMMAND_LENGTH:
+        raise ValueError(
+            f"{label} must be at most {MAX_SHELL_COMMAND_LENGTH} characters"
+        )
+    if any(
+        unicodedata.category(character) in {"Cc", "Cf"}
+        and character not in {"\n", "\t"}
+        for character in value
+    ):
+        raise ValueError(f"{label} contains unsupported control characters")
+    if not re.match(r"^\s*SELECT\b", value, flags=re.IGNORECASE):
+        raise ValueError(f"{label} must start with SELECT")
+    return value
+
+
 def _normalize_operation(command: dict[str, Any], index: int) -> dict[str, Any]:
     phase = command.get("phase")
     if phase not in PHASES:
@@ -471,8 +628,10 @@ def _normalize_operation(command: dict[str, Any], index: int) -> dict[str, Any]:
     allowed = {"phase", "description", "timeout_seconds"}
     if phase == "preflight":
         allowed.update({"check", "target"})
-        if command.get("check") == "file-sha256":
+        if command.get("check") in {"file-sha256", "sqlite-query-sha256"}:
             allowed.update({"sha256", "metadata_sha256"})
+        if command.get("check") == "sqlite-query-sha256":
+            allowed.add("query")
     else:
         allowed.add("command")
         if phase == "apply":
@@ -506,6 +665,7 @@ def _normalize_operation(command: dict[str, Any], index: int) -> dict[str, Any]:
             "path-exists",
             "file-exists",
             "file-sha256",
+            "sqlite-query-sha256",
             "directory-exists",
         }:
             target = _normalize_remote_path(
@@ -519,7 +679,7 @@ def _normalize_operation(command: dict[str, Any], index: int) -> dict[str, Any]:
         elif not SERVICE_RE.fullmatch(target):
             raise ValueError(f"operations[{index}].target is not a service name")
         normalized.update({"check": check, "target": target})
-        if check == "file-sha256":
+        if check in {"file-sha256", "sqlite-query-sha256"}:
             expected_sha256 = command.get("sha256")
             if not isinstance(expected_sha256, str) or not re.fullmatch(
                 r"[0-9a-f]{64}", expected_sha256
@@ -536,6 +696,10 @@ def _normalize_operation(command: dict[str, Any], index: int) -> dict[str, Any]:
                     f"operations[{index}].metadata_sha256 must be a lowercase SHA-256 digest"
                 )
             normalized["metadata_sha256"] = expected_metadata_sha256
+        if check == "sqlite-query-sha256":
+            normalized["query"] = _normalize_sqlite_query(
+                command.get("query"), label=f"operations[{index}].query"
+            )
         return normalized
 
     normalized["command"] = _require_shell_text(
@@ -594,28 +758,29 @@ def _build_rollback_contract(
         target for target in declared_targets if target not in covered_targets
     ]
     preflight_hashes: list[dict[str, str]] = []
-    observed_hashes: dict[str, tuple[str, str]] = {}
+    observed_hashes: dict[str, dict[str, str]] = {}
     for operation in operations:
-        if operation["phase"] != "preflight" or operation["check"] != "file-sha256":
+        if operation["phase"] != "preflight" or operation["check"] not in {
+            "file-sha256",
+            "sqlite-query-sha256",
+        }:
             continue
         target = operation["target"]
-        expected_sha256 = operation["sha256"]
-        expected_metadata_sha256 = operation["metadata_sha256"]
+        current = {
+            "target": target,
+            "sha256": operation["sha256"],
+            "metadata_sha256": operation["metadata_sha256"],
+        }
+        if operation["check"] == "sqlite-query-sha256":
+            current["query"] = operation["query"]
         prior = observed_hashes.get(target)
-        current = (expected_sha256, expected_metadata_sha256)
         if prior is not None and prior != current:
             raise ValueError(
-                "conflicting file-sha256 preflights for declared target: " + target
+                "conflicting typed prestate checks for declared target: " + target
             )
         if prior is None:
             observed_hashes[target] = current
-            preflight_hashes.append(
-                {
-                    "target": target,
-                    "sha256": expected_sha256,
-                    "metadata_sha256": expected_metadata_sha256,
-                }
-            )
+            preflight_hashes.append(current)
     preflight_file_targets = list(observed_hashes)
     unverified_targets = [
         target for target in declared_targets if target not in preflight_file_targets
@@ -796,7 +961,8 @@ def validate_change_spec(spec: dict[str, Any], *, source_dir: Path) -> dict[str,
         )
     if rollback_contract["unverified_targets"]:
         raise ValueError(
-            "every declared mutation target needs an exact typed file-sha256 preflight: "
+            "every declared mutation target needs a typed file-sha256 preflight "
+            "or sqlite-query-sha256 preflight: "
             + ", ".join(rollback_contract["unverified_targets"])
         )
     control_channel_guard = assess_control_channel(
@@ -1028,10 +1194,6 @@ def _remote_script(
     *,
     timeout: int,
 ) -> dict[str, Any]:
-    raise PermissionError(CHANGE_EXECUTION_UNAVAILABLE)
-    # The transaction implementation below is retained only for adversarial
-    # review. The gate sits at the SSH sink so importing an underscored helper
-    # cannot bypass the public apply/rollback boundary.
     command, transport_env = ssh_invocation(host)
     return run_command(
         [*command, "sh", "-s"],
@@ -1148,6 +1310,20 @@ def _preflight_command(operation: dict[str, Any]) -> str:
                 operation["target"], operation["metadata_sha256"]
             )
         )
+    if check == "sqlite-query-sha256":
+        return (
+            f"test -f {target} && test ! -L {target} && "
+            f'test "$(stat -c %h -- {target})" -eq 1 && '
+            + _metadata_digest_check_command(
+                operation["target"],
+                operation["metadata_sha256"],
+                profile="stable",
+            )
+            + " && "
+            + _sqlite_query_digest_check_command(
+                operation["target"], operation["query"], operation["sha256"]
+            )
+        )
     if check == "directory-exists":
         return f"test -d {target}"
     if check == "command-exists":
@@ -1159,19 +1335,45 @@ def _preflight_command(operation: dict[str, Any]) -> str:
     raise ValueError(f"unsupported preflight check: {check!r}")
 
 
-def _metadata_digest_check_command(target: str, expected_digest: str) -> str:
+def _metadata_digest_check_command(
+    target: str, expected_digest: str, *, profile: str = "exact"
+) -> str:
+    if profile not in {"exact", "stable"}:
+        raise ValueError("unsupported metadata digest profile")
     quoted_target = shlex.quote(target)
     quoted_expected = shlex.quote(expected_digest)
+    quoted_profile = shlex.quote(profile)
+    quoted_program = shlex.quote(_REMOTE_METADATA_PROGRAM)
     return (
-        "command -v getfacl >/dev/null && command -v getfattr >/dev/null && "
-        "command -v sha256sum >/dev/null && command -v stat >/dev/null && "
-        "command -v cut >/dev/null && "
-        'test "$(LC_ALL=C { '
-        f"stat -c '%u:%g:%a:%y:%C' -- {quoted_target}; "
-        f"getfacl --omit-header --numeric -- {quoted_target}; "
-        f"getfattr --absolute-names --dump -m - -- {quoted_target}; "
-        "} | sha256sum | cut -d ' ' -f 1)\" = "
+        "command -v python3 >/dev/null && "
+        f'test "$(python3 -c {quoted_program} digest {quoted_target} '
+        f'{quoted_profile})" = '
         f"{quoted_expected}"
+    )
+
+
+def _sqlite_query_digest_check_command(
+    target: str,
+    query: str,
+    expected_digest: str,
+    *,
+    target_is_shell_expression: bool = False,
+) -> str:
+    quoted_program = shlex.quote(_REMOTE_SQLITE_PROGRAM)
+    target_argument = target if target_is_shell_expression else shlex.quote(target)
+    return (
+        "command -v python3 >/dev/null && "
+        f'test "$(python3 -c {quoted_program} digest '
+        f'{target_argument} {shlex.quote(query)})" = '
+        f"{shlex.quote(expected_digest)}"
+    )
+
+
+def _sqlite_backup_command(source: str, destination: str) -> str:
+    quoted_program = shlex.quote(_REMOTE_SQLITE_PROGRAM)
+    return (
+        f"python3 -c {quoted_program} backup "
+        f"{shlex.quote(source)} {destination}"
     )
 
 
@@ -1290,51 +1492,16 @@ def _guarded_change_script(
 
 
 def _metadata_function_lines() -> list[str]:
+    quoted_program = shlex.quote(_REMOTE_METADATA_PROGRAM)
     return [
         "verify_file_metadata() {",
-        "  metadata_source=$1",
-        "  metadata_candidate=$2",
-        "  metadata_label=$3",
-        (
-            '  test "$(stat -c \'%u:%g:%a:%y\' -- "$metadata_source")" = '
-            '"$(stat -c \'%u:%g:%a:%y\' -- "$metadata_candidate")"'
-        ),
-        (
-            '  test "$(stat -c \'%C\' -- "$metadata_source")" = '
-            '"$(stat -c \'%C\' -- "$metadata_candidate")"'
-        ),
-        (
-            '  getfacl --omit-header --numeric -- "$metadata_source" '
-            '> "$METADATA_WORK/source-$metadata_label.acl"'
-        ),
-        (
-            '  getfacl --omit-header --numeric -- "$metadata_candidate" '
-            '> "$METADATA_WORK/candidate-$metadata_label.acl"'
-        ),
-        (
-            '  cmp -s -- "$METADATA_WORK/source-$metadata_label.acl" '
-            '"$METADATA_WORK/candidate-$metadata_label.acl"'
-        ),
-        (
-            '  getfattr --absolute-names --dump -m - -- "$metadata_source" '
-            '> "$METADATA_WORK/source-$metadata_label.xattr.raw"'
-        ),
-        (
-            '  getfattr --absolute-names --dump -m - -- "$metadata_candidate" '
-            '> "$METADATA_WORK/candidate-$metadata_label.xattr.raw"'
-        ),
-        (
-            "  sed '/^# file:/d' \"$METADATA_WORK/source-$metadata_label.xattr.raw\" "
-            '> "$METADATA_WORK/source-$metadata_label.xattr"'
-        ),
-        (
-            "  sed '/^# file:/d' \"$METADATA_WORK/candidate-$metadata_label.xattr.raw\" "
-            '> "$METADATA_WORK/candidate-$metadata_label.xattr"'
-        ),
-        (
-            '  cmp -s -- "$METADATA_WORK/source-$metadata_label.xattr" '
-            '"$METADATA_WORK/candidate-$metadata_label.xattr"'
-        ),
+        f'  python3 -c {quoted_program} compare "$1" "$2" exact',
+        "}",
+        "verify_file_stable_metadata() {",
+        f'  python3 -c {quoted_program} compare "$1" "$2" stable',
+        "}",
+        "verify_file_install_metadata() {",
+        f'  python3 -c {quoted_program} compare "$1" "$2" install',
         "}",
     ]
 
@@ -1347,10 +1514,9 @@ def _required_archive_tool_lines() -> list[str]:
         "command -v cut >/dev/null",
         "command -v cmp >/dev/null",
         "command -v cp >/dev/null",
-        "command -v getfacl >/dev/null",
-        "command -v getfattr >/dev/null",
         "command -v mktemp >/dev/null",
         "command -v mv >/dev/null",
+        "command -v python3 >/dev/null",
         "command -v pwd >/dev/null",
         "command -v sed >/dev/null",
         "command -v stat >/dev/null",
@@ -1557,32 +1723,49 @@ def _expected_prestate_commands(
     plan: dict[str, Any], targets: list[str] | None = None
 ) -> list[str]:
     expected = {
-        item["target"]: (item["sha256"], item["metadata_sha256"])
+        item["target"]: item
         for item in plan["rollback_contract"]["preflight_hashes"]
     }
     selected = targets or plan["rollback_contract"]["declared_targets"]
     missing = [target for target in selected if target not in expected]
     if missing:
         raise ValueError(
-            "missing reviewed prestate SHA-256 for target: " + ", ".join(missing)
+            "missing reviewed typed prestate for target: " + ", ".join(missing)
         )
-    lines = ["command -v sha256sum >/dev/null"]
+    lines: list[str] = []
     for target in selected:
         quoted_target = shlex.quote(target)
-        expected_sha256, expected_metadata_sha256 = expected[target]
+        state = expected[target]
         lines.extend(
             [
                 f"test -f {quoted_target} && test ! -L {quoted_target}",
                 f'test "$(stat -c %h -- {quoted_target})" -eq 1',
-                (
-                    f"printf '%s  %s\\n' {shlex.quote(expected_sha256)} "
-                    f"{quoted_target} | sha256sum -c - >/dev/null"
-                ),
-                _metadata_digest_check_command(
-                    target, expected_metadata_sha256
-                ),
             ]
         )
+        if "query" in state:
+            lines.extend(
+                [
+                    _metadata_digest_check_command(
+                        target, state["metadata_sha256"], profile="stable"
+                    ),
+                    _sqlite_query_digest_check_command(
+                        target, state["query"], state["sha256"]
+                    ),
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "command -v sha256sum >/dev/null",
+                    (
+                        f"printf '%s  %s\\n' {shlex.quote(state['sha256'])} "
+                        f"{quoted_target} | sha256sum -c - >/dev/null"
+                    ),
+                    _metadata_digest_check_command(
+                        target, state["metadata_sha256"]
+                    ),
+                ]
+            )
     return lines
 
 
@@ -1613,17 +1796,13 @@ def _backup(
         plan, execution_id=execution_id
     )
     backup_targets = plan["rollback_contract"]["declared_targets"]
-    reviewed_hashes = {
-        item["target"]: item["sha256"]
-        for item in plan["rollback_contract"]["preflight_hashes"]
-    }
-    reviewed_metadata_hashes = {
-        item["target"]: item["metadata_sha256"]
+    reviewed_states = {
+        item["target"]: item
         for item in plan["rollback_contract"]["preflight_hashes"]
     }
     relative_paths = [path[1:] for path in backup_targets]
     quoted_paths = " ".join(shlex.quote(path) for path in relative_paths)
-    lines = ["set -eu", *prepare_backup, *_required_archive_tool_lines()]
+    lines = ["set -eux", *prepare_backup, *_required_archive_tool_lines()]
     lines.extend(
         _target_state_preflight_commands(
             backup_targets, require_existing=True
@@ -1653,8 +1832,7 @@ def _backup(
             '  case "$BACKUP_STAGE" in ./.backup-stage.*) ;; *) exit 1 ;; esac',
             '  BACKUP_STAGE_ABSOLUTE="$PWD/${BACKUP_STAGE#./}"',
             '  BACKUP_STAGING_ROOT="$BACKUP_STAGE_ABSOLUTE/root"',
-            '  METADATA_WORK="$BACKUP_STAGE_ABSOLUTE/metadata-work"',
-            '  mkdir -m 0700 -- "$BACKUP_STAGING_ROOT" "$METADATA_WORK"',
+            '  mkdir -m 0700 -- "$BACKUP_STAGING_ROOT"',
         ]
     )
     staged_parents: list[str] = []
@@ -1672,37 +1850,74 @@ def _backup(
         parent = str(PurePosixPath(target).parent)
         source_name = f"./{PurePosixPath(target).name}"
         staged_path = f'"$BACKUP_STAGING_ROOT"/{shlex.quote(relative)}'
-        reviewed_sha256 = shlex.quote(reviewed_hashes[target])
+        state = reviewed_states[target]
         lines.extend(
             [
                 "  (",
                 f"    cd -P {shlex.quote(parent)}",
                 f"    test \"$(pwd -P)\" = {shlex.quote(parent)}",
                 f"    test -f {shlex.quote(source_name)} && test ! -L {shlex.quote(source_name)}",
-                (
-                    f"    cp --preserve=all --no-dereference -- "
-                    f"{shlex.quote(source_name)} {staged_path}"
-                ),
-                f"    test -f {staged_path} && test ! -L {staged_path}",
-                (
-                    f"    printf '%s  %s\\n' {reviewed_sha256} {staged_path} "
-                    "| sha256sum -c - >/dev/null"
-                ),
-                (
-                    f"    printf '%s  %s\\n' {reviewed_sha256} "
-                    f"{shlex.quote(source_name)} | sha256sum -c - >/dev/null"
-                ),
-                "    "
-                + _metadata_digest_check_command(
-                    target, reviewed_metadata_hashes[target]
-                ),
-                (
-                    f"    verify_file_metadata {shlex.quote(source_name)} "
-                    f"{staged_path} backup-{index}"
-                ),
-                "  )",
             ]
         )
+        if "query" in state:
+            lines.extend(
+                [
+                    (
+                        "    cp --attributes-only --preserve=all --no-dereference -- "
+                        f"{shlex.quote(source_name)} {staged_path}"
+                    ),
+                    "    "
+                    + _sqlite_backup_command(source_name, staged_path),
+                    f"    test -f {staged_path} && test ! -L {staged_path}",
+                    "    "
+                    + _sqlite_query_digest_check_command(
+                        staged_path,
+                        state["query"],
+                        state["sha256"],
+                        target_is_shell_expression=True,
+                    ),
+                    "    "
+                    + _sqlite_query_digest_check_command(
+                        source_name, state["query"], state["sha256"]
+                    ),
+                    "    "
+                    + _metadata_digest_check_command(
+                        target, state["metadata_sha256"], profile="stable"
+                    ),
+                    (
+                        f"    verify_file_stable_metadata {shlex.quote(source_name)} "
+                        f"{staged_path} backup-{index}"
+                    ),
+                ]
+            )
+        else:
+            reviewed_sha256 = shlex.quote(state["sha256"])
+            lines.extend(
+                [
+                    (
+                        f"    cp --preserve=all --no-dereference -- "
+                        f"{shlex.quote(source_name)} {staged_path}"
+                    ),
+                    f"    test -f {staged_path} && test ! -L {staged_path}",
+                    (
+                        f"    printf '%s  %s\\n' {reviewed_sha256} {staged_path} "
+                        "| sha256sum -c - >/dev/null"
+                    ),
+                    (
+                        f"    printf '%s  %s\\n' {reviewed_sha256} "
+                        f"{shlex.quote(source_name)} | sha256sum -c - >/dev/null"
+                    ),
+                    "    "
+                    + _metadata_digest_check_command(
+                        target, state["metadata_sha256"]
+                    ),
+                    (
+                        f"    verify_file_metadata {shlex.quote(source_name)} "
+                        f"{staged_path} backup-{index}"
+                    ),
+                ]
+            )
+        lines.append("  )")
     lines.extend(
         [
             (
@@ -1752,8 +1967,9 @@ def _backup(
     script = "\n".join(lines) + "\n"
     result = _remote_script(host, script, timeout=240)
     if result["returncode"] != 0:
+        diagnostic_tail = str(result.get("stderr", ""))[-4096:]
         raise RuntimeError(
-            f"backup failed: {_safe_remote_output(result['stderr'])}"
+            f"backup failed: {_safe_remote_output(diagnostic_tail)}"
         )
     integrity: dict[str, str] = {}
     for line in str(result.get("stdout", "")).splitlines():
@@ -1968,9 +2184,7 @@ def _validated_archive_script(
         f"cut -c 67- {frozen_manifest} > {manifest_members}",
         f"cmp -s -- {expected} {manifest_members}",
         'STAGING_ROOT="$STAGE_ABSOLUTE/root"',
-        'METADATA_WORK="$STAGE_ABSOLUTE/metadata-work"',
         'mkdir -m 0700 "$STAGING_ROOT"',
-        'mkdir -m 0700 "$METADATA_WORK"',
         (
             "tar --acls --xattrs --selinux --numeric-owner "
             f'-xzpf {frozen_archive} -C "$STAGING_ROOT"'
@@ -2052,9 +2266,6 @@ def _upload_payloads(
     on_target_mutation: Callable[[], None] | None = None,
     on_result: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]]:
-    raise PermissionError(CHANGE_EXECUTION_UNAVAILABLE)
-    # Keep the SCP sink independently gated as well; do not rely only on the
-    # SSH staging call later in this dormant implementation.
     if not EXECUTION_ID_RE.fullmatch(execution_id):
         raise ValueError("payload upload is missing a valid execution ID")
     backup_dir = _normalize_execution_backup_dir(plan, backup_dir)
@@ -2135,12 +2346,11 @@ def _upload_payloads(
                     "command -v cat >/dev/null",
                     "command -v chmod >/dev/null",
                     "command -v cp >/dev/null",
-                    "command -v getfacl >/dev/null",
-                    "command -v getfattr >/dev/null",
                     "command -v mktemp >/dev/null",
                     "command -v mv >/dev/null",
-                    "command -v sed >/dev/null",
+                    "command -v python3 >/dev/null",
                     "command -v sha256sum >/dev/null",
+                    *_metadata_function_lines(),
                     (
                         f"printf '%s  %s\\n' {shlex.quote(payload['sha256'])} "
                         f"{shlex.quote(temporary)} | sha256sum -c - >/dev/null"
@@ -2171,21 +2381,8 @@ def _upload_payloads(
                     ),
                     f"  chmod {shlex.quote(payload['mode'])} -- \"$INSTALL_TEMP\"",
                     (
-                        f"  test \"$(stat -c %u:%g:%C -- {shlex.quote(target_name)})\" = "
-                        '"$(stat -c %u:%g:%C -- "$INSTALL_TEMP")"'
-                    ),
-                    (
-                        f"  test \"$(getfattr --absolute-names --dump -m - -- "
-                        f"{shlex.quote(target_name)} | sed '/^# file:/d')\" = "
-                        '"$(getfattr --absolute-names --dump -m - -- "$INSTALL_TEMP" '
-                        "| sed '/^# file:/d')\""
-                    ),
-                    (
-                        f"  test \"$(getfacl --omit-header --numeric -- "
-                        f"{shlex.quote(target_name)} | "
-                        "sed -n '/^user:[^:][^:]*:/p; /^group:[^:][^:]*:/p')\" = "
-                        '"$(getfacl --omit-header --numeric -- "$INSTALL_TEMP" | '
-                        "sed -n '/^user:[^:][^:]*:/p; /^group:[^:][^:]*:/p')\""
+                        "  verify_file_install_metadata "
+                        f"{shlex.quote(target_name)} \"$INSTALL_TEMP\""
                     ),
                     (
                         f"  printf '%s  %s\\n' {shlex.quote(payload['sha256'])} "
@@ -3033,21 +3230,21 @@ def _load_apply_receipt_for_rollback(
     }
 
 
-def _normalize_rollback_access_evidence(raw: Any) -> dict[str, Any]:
+def _normalize_control_channel_evidence(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict) or set(raw) != {"observed_at", "control_channel"}:
         raise ValueError(
-            "current rollback access evidence needs observed_at and control_channel only"
+            "current control-channel evidence needs observed_at and control_channel only"
         )
     age = _age_seconds(
-        raw.get("observed_at"), label="rollback access evidence observed_at"
+        raw.get("observed_at"), label="control-channel evidence observed_at"
     )
     if age < -MAX_CLOCK_SKEW_SECONDS:
-        raise ValueError("rollback access evidence is too far in the future")
-    if age > MAX_ROLLBACK_ACCESS_EVIDENCE_AGE_SECONDS:
-        raise ValueError("rollback access evidence is older than 15 minutes")
+        raise ValueError("control-channel evidence is too far in the future")
+    if age > MAX_CONTROL_CHANNEL_EVIDENCE_AGE_SECONDS:
+        raise ValueError("control-channel evidence is older than 15 minutes")
     control = normalize_control_channel(raw.get("control_channel"))
     if control != raw.get("control_channel"):
-        raise ValueError("rollback access control_channel must be fully normalized")
+        raise ValueError("control-channel evidence must be fully normalized")
     return {"observed_at": raw["observed_at"], "control_channel": control}
 
 
@@ -3055,30 +3252,14 @@ def apply_plan(
     plan_path: str | Path,
     fleet: dict[str, Any],
     *,
-    confirmed_plan_id: str,
-    receipt_path: str | Path | None = None,
-) -> dict[str, Any]:
-    # Public release gate: keep operational-looking authorization switches out
-    # of the supported API. The arguments are accepted only so callers receive
-    # the same fail-closed result before any plan, fleet or receipt access.
-    _ = (plan_path, fleet, confirmed_plan_id, receipt_path)
-    raise PermissionError(CHANGE_EXECUTION_UNAVAILABLE)
-
-
-def _apply_plan_unreleased(
-    plan_path: str | Path,
-    fleet: dict[str, Any],
-    *,
     authorized: bool,
     confirmed_plan_id: str,
+    current_control_channel: dict[str, Any],
     receipt_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    # The transaction engine remains in-tree for adversarial review, but even a
-    # direct private call must stop before authorization checks or any I/O.
-    raise PermissionError(CHANGE_EXECUTION_UNAVAILABLE)
-
-    if not authorized:
-        raise PermissionError("change apply requires explicit authorization")
+    if authorized is not True:
+        raise PermissionError(CHANGE_AUTHORIZATION_REQUIRED)
+    access_evidence = _normalize_control_channel_evidence(current_control_channel)
     plan = load_plan(plan_path)
     _assert_plan_fresh(plan)
     if confirmed_plan_id != plan["plan_id"]:
@@ -3087,8 +3268,13 @@ def _apply_plan_unreleased(
         raise PermissionError(
             "change plan predates the control-channel guard; create and review a new plan"
         )
+    if access_evidence["control_channel"] != plan.get("control_channel"):
+        raise ValueError(
+            "current control-channel evidence differs from the reviewed plan; "
+            "create and review a new plan"
+        )
     guard = assess_control_channel(
-        plan.get("control_channel", {}),
+        access_evidence["control_channel"],
         plan.get("rollback_timer", {}),
         rollback_contract=plan.get("rollback_contract"),
     )
@@ -3096,6 +3282,8 @@ def _apply_plan_unreleased(
         raise ValueError(
             "control-channel guard changed after planning; create and review a new plan"
         )
+    if not guard["execution_available"]:
+        raise PermissionError("remote change execution is unavailable")
     if not guard["can_apply"]:
         raise PermissionError(
             "control-channel guard blocked apply: " + " ".join(guard["reasons"])
@@ -3114,6 +3302,7 @@ def _apply_plan_unreleased(
         "status": "running",
         "steps": [],
         "control_channel_guard": guard,
+        "current_control_channel": access_evidence,
         "receipt_path": str(destination),
     }
     execution_id = uuid.uuid4().hex[:12]
@@ -3335,39 +3524,14 @@ def rollback_plan(
     fleet: dict[str, Any],
     *,
     backup_dir: str,
-    confirmed_plan_id: str,
-    apply_receipt_path: str | Path,
-    current_control_channel: dict[str, Any],
-    receipt_path: str | Path | None = None,
-) -> dict[str, Any]:
-    _ = (
-        plan_path,
-        fleet,
-        backup_dir,
-        confirmed_plan_id,
-        apply_receipt_path,
-        current_control_channel,
-        receipt_path,
-    )
-    raise PermissionError(CHANGE_EXECUTION_UNAVAILABLE)
-
-
-def _rollback_plan_unreleased(
-    plan_path: str | Path,
-    fleet: dict[str, Any],
-    *,
-    backup_dir: str,
     authorized: bool,
     confirmed_plan_id: str,
     apply_receipt_path: str | Path,
     current_control_channel: dict[str, Any],
     receipt_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    # See _apply_plan_unreleased: private rollback execution is gated as well.
-    raise PermissionError(CHANGE_EXECUTION_UNAVAILABLE)
-
-    if not authorized:
-        raise PermissionError("change rollback requires explicit authorization")
+    if authorized is not True:
+        raise PermissionError(CHANGE_AUTHORIZATION_REQUIRED)
     plan = load_plan(plan_path, verify_local_payloads=False)
     if confirmed_plan_id != plan["plan_id"]:
         raise PermissionError("confirmed plan ID does not match the reviewed plan")
@@ -3377,7 +3541,7 @@ def _rollback_plan_unreleased(
         plan=plan,
         backup_dir=normalized_backup_dir,
     )
-    access_evidence = _normalize_rollback_access_evidence(current_control_channel)
+    access_evidence = _normalize_control_channel_evidence(current_control_channel)
     destination = resolve_rollback_receipt_path(plan_path, receipt_path)
     receipt_identity = _reserve_new_local_file(
         destination, label="change rollback receipt"
@@ -3412,6 +3576,9 @@ def _rollback_plan_unreleased(
     checkpoint()
     automatic_timer_uncertain = False
     try:
+        if not guard["execution_available"]:
+            receipt["status"] = "blocked"
+            raise PermissionError("remote change rollback is unavailable")
         if not guard["can_apply"]:
             receipt["status"] = "blocked"
             raise PermissionError(

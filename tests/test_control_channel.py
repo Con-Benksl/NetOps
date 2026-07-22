@@ -82,10 +82,12 @@ class ControlChannelTests(unittest.TestCase):
         base["operator_recovery_reviewed"] = True
         allowed = assess_control_channel(base, {"enabled": False, "delay_seconds": 600})
         self.assertTrue(allowed["can_apply"])
-        self.assertFalse(allowed["execution_available"])
+        self.assertTrue(allowed["execution_available"])
         self.assertEqual(allowed["risk"], "guarded")
-        self.assertIn("只生成计划并交接", allowed["next_action"])
-        self.assertNotIn("按已审核计划执行", allowed["next_action"])
+        self.assertEqual(allowed["execution_mode"], "direct-ssh-or-plan")
+        self.assertIn("Codex 执行", allowed["next_action"])
+        self.assertIn("明确授权", allowed["next_action"])
+        self.assertIn("计划 ID", allowed["next_action"])
 
     def test_shared_path_needs_rollback(self):
         control = {
@@ -106,9 +108,10 @@ class ControlChannelTests(unittest.TestCase):
             rollback_contract=self.rollback_contract(),
         )
         self.assertTrue(allowed["can_apply"])
-        self.assertFalse(allowed["execution_available"])
+        self.assertTrue(allowed["execution_available"])
         self.assertEqual(allowed["risk"], "guarded-high")
-        self.assertIn("不会武装 timer 或执行变更", allowed["reasons"][-1])
+        self.assertEqual(allowed["execution_mode"], "exact-plan")
+        self.assertIn("首次写入前设置", allowed["reasons"][-1])
 
     def test_manual_recovery_never_bypasses_automatic_guard(self):
         control = {
@@ -123,7 +126,8 @@ class ControlChannelTests(unittest.TestCase):
             control, {"enabled": False, "delay_seconds": 600}
         )
         self.assertFalse(result["can_apply"])
-        self.assertIn("本版本不会自动应用", result["reasons"][0])
+        self.assertEqual(result["execution_mode"], "manual-local-control-plane")
+        self.assertIn("本机控制面", result["reasons"][0])
 
     def test_remote_timer_cannot_guard_local_tun_changes(self):
         control = {
@@ -138,7 +142,24 @@ class ControlChannelTests(unittest.TestCase):
             control, {"enabled": True, "delay_seconds": 600}
         )
         self.assertFalse(result["can_apply"])
-        self.assertIn("不能恢复本机组件", result["reasons"][0])
+        self.assertEqual(result["execution_mode"], "manual-local-control-plane")
+        self.assertIn("用户手动完成", result["reasons"][0])
+
+    def test_verified_independent_path_does_not_automate_local_control_plane(self):
+        control = {
+            "dependency": "independent",
+            "change_surfaces": ["local-tun"],
+            "continuity_strategy": "independent-path",
+            "independent_path_verified": True,
+            "operator_recovery_reviewed": True,
+            "evidence": ["alternate management path verified"],
+        }
+        result = assess_control_channel(
+            control, {"enabled": False, "delay_seconds": 600}
+        )
+        self.assertFalse(result["can_apply"])
+        self.assertEqual(result["execution_mode"], "manual-local-control-plane")
+        self.assertIn("远端 Linux 命令继续由 Codex 执行", result["next_action"])
 
     def test_transient_timer_cannot_guard_a_host_reboot(self):
         control = {
@@ -264,7 +285,7 @@ class ControlChannelTests(unittest.TestCase):
             ),
         )
         self.assertFalse(unverified["can_apply"])
-        self.assertIn("file-sha256", unverified["reasons"][0])
+        self.assertIn("sqlite-query-sha256", unverified["reasons"][0])
 
     def test_manual_remote_rollback_requires_an_independent_path(self):
         control = {

@@ -1,7 +1,7 @@
 {
-  "schema_version": "2.0",
+  "schema_version": "3.0",
   "name": "review a proposed service configuration replacement",
-  "summary": "Review a proposed deployment contract; NetOps 0.2.0 will not execute it.",
+  "summary": "Review an example deployment contract before any authorized execution.",
   "host_alias": "edge-a",
   "invariants": [
     "SSH remains reachable",

@@ -327,36 +327,22 @@ class CliContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "8..500"):
             cli.execute(args)
 
-    def test_change_execution_cli_is_unconditionally_unreleased(self):
+    def test_change_execution_cli_requires_explicit_authorization(self):
         parser_help = cli.build_parser().format_help()
-        self.assertIn("Plan a controlled remote change", parser_help)
-        self.assertIn("unavailable in this release", parser_help)
+        self.assertIn("Plan, apply, or roll back a controlled remote change", parser_help)
+        self.assertNotIn("unavailable in this release", parser_help)
         for mode in ("apply", "rollback"):
             output = io.StringIO()
             with patch("sys.stdout", output), self.assertRaises(SystemExit) as exit_info:
                 cli.build_parser().parse_args(["change", mode, "--help"])
             self.assertEqual(exit_info.exception.code, 0)
-            self.assertNotIn("--authorized", output.getvalue())
-        self.assertNotIn(
+            self.assertIn("--authorized", output.getvalue())
+        self.assertIn(
             "authorized", inspect.signature(change.apply_plan).parameters
         )
-        self.assertNotIn(
+        self.assertIn(
             "authorized", inspect.signature(change.rollback_plan).parameters
         )
-        with patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
-            cli.build_parser().parse_args(
-                [
-                    "change",
-                    "apply",
-                    "--plan",
-                    "missing-plan.json",
-                    "--fleet",
-                    "missing-fleet.json",
-                    "--authorized",
-                    "--confirm-plan-id",
-                    "not-a-plan-id",
-                ]
-            )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             cases = (
@@ -367,6 +353,8 @@ class CliContractTests(unittest.TestCase):
                     str(root / "missing-plan.json"),
                     "--fleet",
                     str(root / "missing-fleet.json"),
+                    "--current-control-channel",
+                    str(root / "missing-control.json"),
                     "--confirm-plan-id",
                     "not-a-plan-id",
                     "--receipt",
@@ -411,7 +399,7 @@ class CliContractTests(unittest.TestCase):
                     with patch.object(cli.sys, "stderr", stderr):
                         self.assertEqual(cli.main(arguments), 2)
                     self.assertIn(
-                        "remote change execution is unavailable in this release",
+                        "requires explicit authorization for the reviewed plan ID",
                         stderr.getvalue(),
                     )
                     load_fleet.assert_not_called()
@@ -423,6 +411,101 @@ class CliContractTests(unittest.TestCase):
                     lexists.assert_not_called()
             self.assertFalse((root / "apply.receipt.json").exists())
             self.assertFalse((root / "rollback.receipt.json").exists())
+
+        with patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            cli.build_parser().parse_args(
+                [
+                    "change",
+                    "apply",
+                    "--plan",
+                    "plan.json",
+                    "--fleet",
+                    "fleet.json",
+                    "--current-control-channel",
+                    "control.json",
+                    "--confirm-plan-id",
+                    "a" * 32,
+                    "--auth",
+                ]
+            )
+
+    @patch("netops_core.cli._json")
+    @patch("netops_core.cli.apply_plan", return_value={"status": "applied"})
+    @patch("netops_core.cli.load_json_limited", return_value={"observed_at": "now"})
+    @patch("netops_core.cli.load_fleet", return_value={"hosts": []})
+    def test_change_apply_cli_dispatches_authorized_plan(
+        self, load_fleet, load_json, apply_plan, _json
+    ):
+        args = cli.build_parser().parse_args(
+            [
+                "change",
+                "apply",
+                "--plan",
+                "plan.json",
+                "--fleet",
+                "fleet.json",
+                "--current-control-channel",
+                "control.json",
+                "--confirm-plan-id",
+                "a" * 32,
+                "--authorized",
+                "--receipt",
+                "apply.receipt.json",
+            ]
+        )
+        self.assertEqual(cli.execute(args), 0)
+        load_json.assert_called_once_with("control.json", max_bytes=1_048_576)
+        load_fleet.assert_called_once_with("fleet.json")
+        apply_plan.assert_called_once_with(
+            "plan.json",
+            {"hosts": []},
+            authorized=True,
+            confirmed_plan_id="a" * 32,
+            current_control_channel={"observed_at": "now"},
+            receipt_path="apply.receipt.json",
+        )
+
+    @patch("netops_core.cli._json")
+    @patch("netops_core.cli.rollback_plan", return_value={"status": "rolled-back"})
+    @patch("netops_core.cli.load_json_limited", return_value={"observed_at": "now"})
+    @patch("netops_core.cli.load_fleet", return_value={"hosts": []})
+    def test_change_rollback_cli_dispatches_authorized_receipt(
+        self, load_fleet, load_json, rollback_plan, _json
+    ):
+        args = cli.build_parser().parse_args(
+            [
+                "change",
+                "rollback",
+                "--plan",
+                "plan.json",
+                "--fleet",
+                "fleet.json",
+                "--backup-dir",
+                "/var/backups/netops/plan/execution",
+                "--apply-receipt",
+                "apply.receipt.json",
+                "--current-control-channel",
+                "control.json",
+                "--confirm-plan-id",
+                "b" * 32,
+                "--authorized",
+                "--receipt",
+                "rollback.receipt.json",
+            ]
+        )
+        self.assertEqual(cli.execute(args), 0)
+        load_fleet.assert_called_once_with("fleet.json")
+        load_json.assert_called_once_with("control.json", max_bytes=1_048_576)
+        rollback_plan.assert_called_once_with(
+            "plan.json",
+            {"hosts": []},
+            backup_dir="/var/backups/netops/plan/execution",
+            authorized=True,
+            confirmed_plan_id="b" * 32,
+            apply_receipt_path="apply.receipt.json",
+            current_control_channel={"observed_at": "now"},
+            receipt_path="rollback.receipt.json",
+        )
 
     def test_installed_entry_point_is_resolved_independently_of_cwd(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -525,7 +608,6 @@ class CliContractTests(unittest.TestCase):
             )
         )
 
-    @unittest.skip("change execution receipts are intentionally unreleased")
     def test_main_surfaces_change_receipt_status_after_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -550,8 +632,11 @@ class CliContractTests(unittest.TestCase):
                         str(root / "plan.json"),
                         "--fleet",
                         str(root / "fleet.json"),
+                        "--current-control-channel",
+                        str(root / "control.json"),
                         "--confirm-plan-id",
                         "0123456789abcdef",
+                        "--authorized",
                         "--receipt",
                         str(receipt),
                     ]
@@ -563,7 +648,6 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("apply.receipt.json", output)
         self.assertIn("do not retry", output)
 
-    @unittest.skip("change execution receipts are intentionally unreleased")
     def test_main_treats_non_finite_change_receipt_as_unreadable(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -586,8 +670,11 @@ class CliContractTests(unittest.TestCase):
                         str(root / "plan.json"),
                         "--fleet",
                         str(root / "fleet.json"),
+                        "--current-control-channel",
+                        str(root / "control.json"),
                         "--confirm-plan-id",
                         "0123456789abcdef",
+                        "--authorized",
                         "--receipt",
                         str(receipt),
                     ]
@@ -615,8 +702,11 @@ class CliContractTests(unittest.TestCase):
                         str(root / "plan.json"),
                         "--fleet",
                         str(root / "fleet.json"),
+                        "--current-control-channel",
+                        str(root / "control.json"),
                         "--confirm-plan-id",
                         "0123456789abcdef",
+                        "--authorized",
                         "--receipt",
                         str(receipt),
                     ]

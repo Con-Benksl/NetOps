@@ -1,4 +1,4 @@
 interface:
   display_name: "NetOps · 搭建与修改"
   short_description: "安全搭建面板、节点、域名和节点专属出口"
-  default_prompt: "用 $netops-build 先给我只读审计、生成计划和审核并交接的选项，并解释区别；本版本不执行远程写入或自动回滚。"
+  default_prompt: "用 $netops-build 先给我带解释的只读审计、生成计划和审核后执行选项；独立远端 VPS 说明影响、预计中断、备份与回滚并得到确认后，直接由 Codex 通过 SSH 执行。"

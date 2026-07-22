@@ -277,18 +277,45 @@ def _check_json_schemas(root: Path) -> list[str]:
             )
         except (OSError, UnicodeError, ValueError) as exc:
             errors.append(f"{example_name}: cannot validate example: {exc}")
+
+    plan_validator = validators.get("schemas/change-plan.schema.json")
+    if plan_validator is not None:
+        sys.path.insert(0, str(root))
+        try:
+            from netops_core.change import create_plan
+            from netops_core.fleet import validate_fleet
+
+            fleet = _load_release_json(root / "examples/fleet.example.json")
+            validate_fleet(fleet)
+            with tempfile.TemporaryDirectory() as raw:
+                plan = create_plan(
+                    root / "examples/change-spec.example.json",
+                    fleet,
+                    Path(raw) / "change-plan.json",
+                )
+            plan_validator.validate(plan)
+        except ValidationError as exc:
+            location = "$" + "".join(
+                f"[{part}]" if isinstance(part, int) else f".{part}"
+                for part in exc.absolute_path
+            )
+            errors.append(
+                "generated change plan: schema validation failed at "
+                f"{location}: {exc.message}"
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            errors.append(f"generated change plan: cannot validate runtime plan: {exc}")
+        finally:
+            sys.path.pop(0)
     return errors
 
 
 def _check_change_execution_gate(root: Path) -> list[str]:
     sys.path.insert(0, str(root))
     try:
+        from netops_core import CHANGE_SCHEMA_VERSION
         from netops_core.change import (
-            CHANGE_EXECUTION_UNAVAILABLE,
-            _apply_plan_unreleased,
-            _remote_script,
-            _rollback_plan_unreleased,
-            _upload_payloads,
+            CHANGE_AUTHORIZATION_REQUIRED,
             apply_plan,
             rollback_plan,
         )
@@ -298,68 +325,91 @@ def _check_change_execution_gate(root: Path) -> list[str]:
         lambda: apply_plan(
             root / "missing-release-plan.json",
             {},
+            authorized=False,
             confirmed_plan_id="not-a-plan",
+            current_control_channel={},
         ),
         lambda: rollback_plan(
             root / "missing-release-plan.json",
             {},
             backup_dir="not-a-backup",
+            authorized=False,
             confirmed_plan_id="not-a-plan",
             apply_receipt_path=root / "missing-release-receipt.json",
             current_control_channel={},
         ),
-        lambda: _apply_plan_unreleased(
+        lambda: apply_plan(
             root / "missing-release-plan.json",
             {},
-            authorized=True,
+            authorized="false",  # type: ignore[arg-type]
             confirmed_plan_id="not-a-plan",
+            current_control_channel={},
         ),
-        lambda: _rollback_plan_unreleased(
+        lambda: rollback_plan(
             root / "missing-release-plan.json",
             {},
             backup_dir="not-a-backup",
-            authorized=True,
+            authorized=1,  # type: ignore[arg-type]
             confirmed_plan_id="not-a-plan",
             apply_receipt_path=root / "missing-release-receipt.json",
             current_control_channel={},
-        ),
-        lambda: _remote_script({}, "true", timeout=1),
-        lambda: _upload_payloads(
-            {},
-            {},
-            execution_id="invalid",
-            backup_dir="invalid",
         ),
     )
     errors: list[str] = []
     for name, function in (("apply", apply_plan), ("rollback", rollback_plan)):
-        if "authorized" in inspect.signature(function).parameters:
+        if "authorized" not in inspect.signature(function).parameters:
             errors.append(
-                f"change {name}: public API must not expose an authorization parameter"
+                f"change {name}: public API must require an authorization parameter"
             )
     for label, callback in zip(
-        (
-            "apply",
-            "rollback",
-            "private-apply",
-            "private-rollback",
-            "remote-script-sink",
-            "payload-upload-sink",
-        ),
+        ("apply", "rollback", "apply-non-bool", "rollback-non-bool"),
         calls,
         strict=True,
     ):
         try:
             callback()
         except PermissionError as exc:
-            if str(exc) != CHANGE_EXECUTION_UNAVAILABLE:
-                errors.append(f"change {label}: unexpected fail-closed error")
+            if str(exc) != CHANGE_AUTHORIZATION_REQUIRED:
+                errors.append(f"change {label}: unexpected authorization error")
         except Exception as exc:
             errors.append(
-                f"change {label}: execution gate was reached too late ({type(exc).__name__})"
+                f"change {label}: authorization gate was reached too late ({type(exc).__name__})"
             )
         else:
-            errors.append(f"change {label}: unreleased execution did not fail closed")
+            errors.append(f"change {label}: unauthorized execution was not rejected")
+    try:
+        spec_schema = _load_release_json(root / "schemas/change-spec.schema.json")
+        plan_schema = _load_release_json(root / "schemas/change-plan.schema.json")
+        spec_version = spec_schema["properties"]["schema_version"]["const"]
+        plan_version = plan_schema["properties"]["schema_version"]["const"]
+        execution_available = plan_schema["properties"]["control_channel_guard"][
+            "properties"
+        ]["execution_available"]["const"]
+        execution_modes = set(
+            plan_schema["properties"]["control_channel_guard"]["properties"][
+                "execution_mode"
+            ]["enum"]
+        )
+    except (KeyError, OSError, TypeError, UnicodeError, ValueError) as exc:
+        errors.append(f"change schemas: cannot inspect execution contract: {exc}")
+    else:
+        if spec_version != CHANGE_SCHEMA_VERSION or plan_version != CHANGE_SCHEMA_VERSION:
+            errors.append(
+                "change schemas: runtime, spec, and plan schema versions must match"
+            )
+        if execution_available is not True:
+            errors.append(
+                "change plan schema: execution_available must match the released executor"
+            )
+        if execution_modes != {
+            "direct-ssh-or-plan",
+            "exact-plan",
+            "manual-local-control-plane",
+            "read-only",
+        }:
+            errors.append(
+                "change plan schema: execution modes must match the control-channel policy"
+            )
     return errors
 
 
@@ -535,8 +585,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(errors), file=sys.stderr)
         return 1
     print(
-        "release integrity: JSON, versions, packaging/manifest/CI, examples, unreleased "
-        "change and monitor gates, Python compilation"
+        "release integrity: JSON, versions, packaging/manifest/CI, examples, change "
+        "authorization and unreleased monitor gates, Python compilation"
         + (", and Draft 2020-12 schemas" if args.require_jsonschema else "")
         + " passed"
     )
