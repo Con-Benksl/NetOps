@@ -1802,7 +1802,7 @@ def _backup(
     }
     relative_paths = [path[1:] for path in backup_targets]
     quoted_paths = " ".join(shlex.quote(path) for path in relative_paths)
-    lines = ["set -eux", *prepare_backup, *_required_archive_tool_lines()]
+    lines = ["set -eu", *prepare_backup, *_required_archive_tool_lines()]
     lines.extend(
         _target_state_preflight_commands(
             backup_targets, require_existing=True

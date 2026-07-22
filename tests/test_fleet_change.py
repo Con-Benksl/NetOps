@@ -1823,6 +1823,8 @@ class FleetAndChangeTests(unittest.TestCase):
             ) as remote:
                 _backup(plan, fleet_data()["hosts"][0], execution_id="e" * 12)
             script = remote.call_args.args[1]
+            self.assertEqual(script.splitlines()[0], "set -eu")
+            self.assertNotIn("set -eux", script)
             self.assertIn("source.backup(destination)", script)
             self.assertIn("cp --attributes-only --preserve=all", script)
             self.assertIn("verify_file_stable_metadata", script)

@@ -49,12 +49,12 @@ NetOps 会从当前能够访问的观察点收集信息：
 需要 Node.js 22.20.0 或更高版本。从已审查的精确发布标签安装。不要把浮动分支或 `latest` 管道直接交给 shell；下面的 CLI 版本和 NetOps 标签都固定。安装器在 Codex 环境中可能自动进入非交互模式，因此先用只读列表确认恰好发现 `netops` 和五个子 Skill，再单独执行安装：
 
 ```bash
-git clone --branch v0.3.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.3.1 --depth 1 https://github.com/Con-Benksl/NetOps.git
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -l --full-depth
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
 ```
 
-发布者尚未创建 `v0.3.0` 标签时，这条命令应当失败；不要退回 `main` 或自动选择最新提交。
+发布者尚未创建 `v0.3.1` 标签时，这条命令应当失败；不要退回 `main` 或自动选择最新提交。
 
 安装后，直接描述你遇到的情况即可。例如：
 
@@ -104,12 +104,12 @@ NetOps 会把这件事当作所有流程共同遵守的底层安全门：
 需要 Python 3.10–3.14：
 
 ```bash
-git clone --branch v0.3.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.3.1 --depth 1 https://github.com/Con-Benksl/NetOps.git
 cd NetOps
 python3 scripts/netopsctl.py --help
 ```
 
-这里同样要求 `v0.3.0` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
+这里同样要求 `v0.3.1` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
 
 `0.3.0` 将变更 spec/plan 合同升级为 `schema_version: "3.0"`，并开放受控远程执行：计划、控制通道门禁、精确文件备份、自动回滚和回执保持绑定。`0.2.0` 的 `2.0` 变更计划会被明确拒绝，必须重新审计和生成。fleet 与诊断包公共合同仍为 `2.0`；监控本地配置/所有权清单以及支持包容器各自的内部 `1.0` 格式不受这次变更影响。
 
