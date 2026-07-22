@@ -21,8 +21,47 @@ MAX_CHARS = 8000
 MAX_STREAM_BYTES = MAX_CHARS * 4
 READ_CHUNK_BYTES = 65536
 TERMINATION_GRACE_SECONDS = 0.5
-SYSTEM_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
-SYSTEM_ENVIRONMENT = {"PATH": SYSTEM_PATH, "LC_ALL": "C"}
+if os.name == "nt":
+    # The collector is sent to Linux hosts, but keeping its process runner
+    # portable lets the same bounded-I/O contract run in the Windows release
+    # matrix.  Older Windows Python releases need SystemRoot when the child
+    # environment is replaced instead of inherited.  Resolve it through the
+    # operating system instead of trusting a caller-controlled environment.
+    import ctypes
+
+    windows_directory = ctypes.windll.kernel32.GetWindowsDirectoryW
+    windows_directory.argtypes = (ctypes.c_wchar_p, ctypes.c_uint)
+    windows_directory.restype = ctypes.c_uint
+    windows_directory_buffer = ctypes.create_unicode_buffer(32768)
+    windows_directory_length = windows_directory(
+        windows_directory_buffer, len(windows_directory_buffer)
+    )
+    if (
+        windows_directory_length == 0
+        or windows_directory_length >= len(windows_directory_buffer)
+    ):
+        raise RuntimeError("cannot resolve the trusted Windows directory")
+    system_root = windows_directory_buffer.value
+    root = system_root.rstrip("\\/")
+    SYSTEM_PATH = ";".join(
+        (
+            root + r"\System32\OpenSSH",
+            root + r"\System32",
+            root + r"\System32\WindowsPowerShell\v1.0",
+            root,
+        )
+    )
+    SYSTEM_ENVIRONMENT = {
+        "PATH": SYSTEM_PATH,
+        "SYSTEMROOT": system_root,
+        "SystemRoot": system_root,
+        "WINDIR": system_root,
+        "COMSPEC": root + r"\System32\cmd.exe",
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+    }
+else:
+    SYSTEM_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+    SYSTEM_ENVIRONMENT = {"PATH": SYSTEM_PATH, "LC_ALL": "C"}
 ANSI_ESCAPE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\|$)|"
     r"[PX^_][^\x1b]*(?:\x1b\\|$)|[@-_])"

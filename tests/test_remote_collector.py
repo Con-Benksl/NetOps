@@ -16,6 +16,51 @@ def load_collector_namespace():
 
 
 class RemoteCollectorProcessTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "requires the Windows system API")
+    def test_windows_environment_keeps_required_system_context_only(self):
+        environment = {
+            "SYSTEMROOT": r"C:\Users\attacker\fake-windows",
+            "COMSPEC": r"C:\Users\attacker\cmd.exe",
+            "PATHEXT": ".EVIL",
+            "PATH": r"C:\Users\attacker\bin",
+            "TEMP": r"C:\Users\attacker\temp",
+            "TMP": r"C:\Users\attacker\tmp",
+            "APPLICATION_TOKEN": "must-not-leak",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            collector = load_collector_namespace()
+
+        child_environment = collector["SYSTEM_ENVIRONMENT"]
+        trusted_root = child_environment["SYSTEMROOT"]
+        self.assertEqual(
+            set(child_environment),
+            {
+                "PATH",
+                "SYSTEMROOT",
+                "SystemRoot",
+                "WINDIR",
+                "COMSPEC",
+                "PATHEXT",
+            },
+        )
+        self.assertNotIn(r"C:\Users\attacker", trusted_root)
+        self.assertEqual(
+            child_environment["PATH"],
+            ";".join(
+                (
+                    trusted_root + r"\System32\OpenSSH",
+                    trusted_root + r"\System32",
+                    trusted_root + r"\System32\WindowsPowerShell\v1.0",
+                    trusted_root,
+                )
+            ),
+        )
+        self.assertEqual(
+            child_environment["COMSPEC"], trusted_root + r"\System32\cmd.exe"
+        )
+        self.assertEqual(child_environment["PATHEXT"], ".COM;.EXE;.BAT;.CMD")
+        self.assertNotIn("APPLICATION_TOKEN", child_environment)
+
     def test_launch_error_marks_command_unavailable(self):
         collector = load_collector_namespace()
         with patch.object(
@@ -39,7 +84,7 @@ class RemoteCollectorProcessTests(unittest.TestCase):
 
         result = collector["run"]([sys.executable, "-c", command], timeout=5)
 
-        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["returncode"], 0, result)
         self.assertLessEqual(len(result["stdout"]), collector["MAX_CHARS"])
         self.assertLessEqual(len(result["stderr"]), collector["MAX_CHARS"])
         self.assertTrue(result["stdout"].endswith("OUT-END"))
@@ -89,7 +134,7 @@ class RemoteCollectorProcessTests(unittest.TestCase):
         result = collector["run"]([sys.executable, "-c", command], timeout=0.2)
         duration = time.monotonic() - started
 
-        self.assertIsNone(result["returncode"])
+        self.assertIsNone(result["returncode"], result)
         self.assertIn("timed out", result["stderr"])
         self.assertLess(duration, 2.0)
 

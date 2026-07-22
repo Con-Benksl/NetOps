@@ -239,6 +239,15 @@ def _write_scan(
     return {"bundle": str(json_path), "report": str(report_path), "run_id": bundle.run_id}
 
 
+def _configure_utf8_stdio() -> None:
+    """Make redirected CLI output deterministic across operating systems."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def _json(data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
 
@@ -859,6 +868,7 @@ def execute(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_utf8_stdio()
     parser = build_parser()
     parse_stderr = io.StringIO()
     try:

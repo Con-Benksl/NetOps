@@ -2,6 +2,7 @@ import io
 import inspect
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 import unicodedata
@@ -15,6 +16,38 @@ from netops_core.models import DiagnosticBundle, Observation
 
 
 class CliContractTests(unittest.TestCase):
+    def test_cli_overrides_legacy_redirected_output_encoding(self):
+        root = Path(__file__).resolve().parents[1]
+        environment = os.environ.copy()
+        environment["PYTHONIOENCODING"] = "cp1252"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = subprocess.run(
+                [
+                    cli.sys.executable,
+                    str(root / "scripts" / "netopsctl.py"),
+                    "tools",
+                    "list",
+                ],
+                cwd=temporary,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=15,
+                check=False,
+            )
+
+        self.assertEqual(
+            completed.returncode,
+            0,
+            completed.stderr.decode("utf-8", errors="replace"),
+        )
+        payload = json.loads(completed.stdout.decode("utf-8"))
+        self.assertTrue(
+            any("连续采样" in tool["purpose_zh"] for tool in payload["tools"])
+        )
+
     def test_monitor_help_hides_compatibility_sampler_and_has_no_authorization_flag(self):
         output = io.StringIO()
         with patch("sys.stdout", output), self.assertRaises(SystemExit) as exit_info:
