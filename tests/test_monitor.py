@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from netops_core.monitor import (
@@ -19,7 +20,9 @@ from netops_core.monitor import (
     _load_config,
     _load_state,
     _probe_failed,
+    _read_regular_bytes,
     _release_lock,
+    _scan_snapshot_files_by_path,
     _scheduler_executable,
     _validate_system_scope_launcher,
     _validate_system_scope_data_paths,
@@ -79,6 +82,33 @@ def canonical_owned_linux_monitor(root: Path) -> dict[str, Path]:
 
 
 class MonitorTests(unittest.TestCase):
+    def test_control_file_reader_requests_binary_mode_when_available(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "control.txt"
+            path.write_bytes(b"line-one\r\nline-two\r\n")
+            real_open = os.open
+            real_binary_flag = getattr(os, "O_BINARY", 0)
+            binary_flag = 1 << 29
+            opened_flags: list[int] = []
+
+            def open_with_simulated_binary_flag(
+                target, flags, mode=0o777, *, dir_fd=None
+            ):
+                opened_flags.append(flags)
+                kwargs = {} if dir_fd is None else {"dir_fd": dir_fd}
+                real_flags = (flags & ~binary_flag) | real_binary_flag
+                return real_open(target, real_flags, mode, **kwargs)
+
+            with patch.object(os, "O_BINARY", binary_flag, create=True), patch(
+                "netops_core.monitor.os.open",
+                side_effect=open_with_simulated_binary_flag,
+            ):
+                payload = _read_regular_bytes(path, label="test control file")
+
+        self.assertEqual(payload, b"line-one\r\nline-two\r\n")
+        self.assertTrue(opened_flags)
+        self.assertTrue(all(flags & binary_flag for flags in opened_flags))
+
     def test_public_monitor_mutation_is_unavailable_before_io(self):
         with patch("netops_core.monitor.platform_id", return_value="linux"):
             plan = build_install_plan(
@@ -775,6 +805,52 @@ class MonitorTests(unittest.TestCase):
                 )
             self.assertEqual(result["removed_count"], 2)
             self.assertEqual(len(list(snapshots.glob("*.json"))), 3)
+
+    def test_path_snapshot_scan_does_not_use_zeroed_direntry_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshot_dir = Path(temporary)
+            snapshot = snapshot_dir / "snapshot.json"
+            snapshot.write_bytes(b"{}")
+            expected = snapshot.lstat()
+
+            class WindowsLikeEntry:
+                name = snapshot.name
+                stat_called = False
+
+                def stat(self, *, follow_symlinks=True):
+                    self.stat_called = True
+                    return SimpleNamespace(
+                        st_mode=expected.st_mode,
+                        st_dev=0,
+                        st_ino=0,
+                        st_mtime=expected.st_mtime,
+                        st_size=expected.st_size,
+                    )
+
+            class Entries:
+                def __init__(self, entry):
+                    self.entry = entry
+
+                def __enter__(self):
+                    return iter((self.entry,))
+
+                def __exit__(self, exc_type, exc, traceback):
+                    return False
+
+            entry = WindowsLikeEntry()
+            with patch(
+                "netops_core.monitor.os.scandir",
+                return_value=Entries(entry),
+            ):
+                files, entries_seen = _scan_snapshot_files_by_path(snapshot_dir)
+
+        self.assertFalse(entry.stat_called)
+        self.assertEqual(entries_seen, 1)
+        self.assertEqual(len(files), 1)
+        self.assertEqual(
+            (files[0][1].st_dev, files[0][1].st_ino),
+            (expected.st_dev, expected.st_ino),
+        )
 
     def test_owner_manifest_rejects_line_ending_rewrites(self):
         with tempfile.TemporaryDirectory() as temporary:

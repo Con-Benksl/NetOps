@@ -197,7 +197,12 @@ def _read_regular_bytes(
         raise ValueError(f"{label} must be a regular file")
     if before.st_size > max_bytes:
         raise ValueError(f"{label} is unexpectedly large")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -2505,6 +2510,40 @@ def _write_locked_monitor_state(
         raise
 
 
+def _snapshot_file_info(path: Path) -> os.stat_result:
+    """Return a stable path-based identity for a regular snapshot file."""
+
+    info = path.lstat()
+    if _is_link_like(path) or not stat.S_ISREG(info.st_mode):
+        raise ValueError("monitor snapshot must be an unlinked regular file")
+    return info
+
+
+def _scan_snapshot_files_by_path(
+    snapshot_dir: Path,
+) -> tuple[list[tuple[str, os.stat_result]], int]:
+    """Scan without ``DirEntry.stat`` whose Windows identity fields are zero."""
+
+    files: list[tuple[str, os.stat_result]] = []
+    entries_seen = 0
+    with os.scandir(snapshot_dir) as entries:
+        for entry in entries:
+            entries_seen += 1
+            if entries_seen > MAX_SNAPSHOT_DIRECTORY_ENTRIES:
+                raise ValueError(
+                    "monitor snapshots directory exceeds the safe entry limit"
+                )
+            if not entry.name.endswith(".json"):
+                continue
+            path = snapshot_dir / entry.name
+            try:
+                info = _snapshot_file_info(path)
+            except (OSError, ValueError):
+                continue
+            files.append((path.name, info))
+    return files, entries_seen
+
+
 def prune_snapshots(state_dir: Path, *, retention_days: int, max_bytes: int) -> dict[str, Any]:
     if type(retention_days) is not int or not 1 <= retention_days <= 365:
         raise ValueError("monitor retention_days must be an integer in 1..365")
@@ -2588,23 +2627,7 @@ def prune_snapshots(state_dir: Path, *, retention_days: int, max_bytes: int) -> 
             directory_descriptor = None
             raise
     else:
-        with os.scandir(snapshot_dir) as entries:
-            for entry in entries:
-                entries_seen += 1
-                if entries_seen > MAX_SNAPSHOT_DIRECTORY_ENTRIES:
-                    raise ValueError(
-                        "monitor snapshots directory exceeds the safe entry limit"
-                    )
-                if not entry.name.endswith(".json"):
-                    continue
-                path = snapshot_dir / entry.name
-                try:
-                    info = entry.stat(follow_symlinks=False)
-                except OSError:
-                    continue
-                if not stat.S_ISREG(info.st_mode):
-                    continue
-                files.append((path.name, info))
+        files, entries_seen = _scan_snapshot_files_by_path(snapshot_dir)
     files.sort(key=lambda item: item[1].st_mtime)
     removed: list[str] = []
     removed_count = 0
@@ -2628,12 +2651,15 @@ def prune_snapshots(state_dir: Path, *, retention_days: int, max_bytes: int) -> 
             else:
                 path = snapshot_dir / name
                 _assert_real_directory(snapshot_dir, identity=directory_identity)
-                current = path.lstat()
-                if (
-                    _is_link_like(path)
-                    or not stat.S_ISREG(current.st_mode)
-                    or (current.st_dev, current.st_ino)
-                    != (expected.st_dev, expected.st_ino)
+                try:
+                    current = _snapshot_file_info(path)
+                except (OSError, ValueError) as exc:
+                    raise ValueError(
+                        "monitor snapshot changed during pruning"
+                    ) from exc
+                if (current.st_dev, current.st_ino) != (
+                    expected.st_dev,
+                    expected.st_ino,
                 ):
                     raise ValueError("monitor snapshot changed during pruning")
                 path.unlink()
