@@ -1,4 +1,4 @@
 interface:
   display_name: "NetOps · 长期管理"
   short_description: "监控、备份、升级、安全与多 VPS 标准化"
-  default_prompt: "用 $netops-manage 为我的 VPS 网络和代理节点建立长期稳定运维流程。"
+  default_prompt: "用 $netops-manage 先给我带解释的管理目标选项，再建立包含独立管理通道、回滚和紧急恢复演练的长期运维流程；远端工作只生成计划并交接，不执行 SSH 写入。"

@@ -2,7 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Con-Benksl/NetOps/schemas/change-spec.schema.json",
   "title": "NetOps Controlled Change Specification",
+  "description": "Review-only change specification. NetOps 0.2.0 validates and plans this document but does not execute apply or rollback operations.",
   "type": "object",
+  "$defs": {
+    "canonicalRemotePath": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Canonical POSIX absolute path with one leading slash, no dot aliases, and no Unicode control/format characters.",
+      "pattern": "^(?!.*[\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB])/(?!/)(?:(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*)?$"
+    },
+    "reviewText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$"
+    },
+    "shellCommand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384,
+      "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$"
+    }
+  },
   "required": [
     "schema_version",
     "name",
@@ -13,29 +34,53 @@
     "operations"
   ],
   "properties": {
-    "schema_version": {"const": "1.0"},
-    "name": {"type": "string", "minLength": 1},
-    "summary": {"type": "string", "minLength": 1},
-    "host_alias": {"type": "string", "minLength": 1},
+    "schema_version": {"const": "2.0"},
+    "name": {"$ref": "#/$defs/reviewText"},
+    "summary": {"$ref": "#/$defs/reviewText"},
+    "host_alias": {"$ref": "#/$defs/reviewText"},
     "invariants": {
       "type": "array",
       "minItems": 1,
-      "items": {"type": "string", "minLength": 1}
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/reviewText"}
     },
     "backup_paths": {
+      "description": "Exact existing file targets only. Every item must equal a declared payload/apply target and have a matching typed file-sha256 preflight bound to the reviewed remote prestate.",
       "type": "array",
       "minItems": 1,
-      "items": {"type": "string", "pattern": "^/"}
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "allOf": [
+          {"$ref": "#/$defs/canonicalRemotePath"},
+          {
+            "not": {
+              "pattern": "^/(?:$|boot/?$|dev(?:/|$)|etc/?$|home/?$|opt/?$|proc(?:/|$)|root/?$|run(?:/|$)|srv/?$|sys(?:/|$)|tmp/?$|usr/?$|var/?$)"
+            }
+          }
+        ]
+      }
     },
-    "backup_root": {"type": "string", "pattern": "^/"},
+    "backup_root": {
+      "const": "/var/backups/netops",
+      "allOf": [
+        {"$ref": "#/$defs/canonicalRemotePath"},
+        {
+          "not": {
+            "pattern": "^/(?:$|boot/?$|dev(?:/|$)|etc/?$|home/?$|opt/?$|proc(?:/|$)|root/?$|run(?:/|$)|srv/?$|sys(?:/|$)|tmp/?$|usr/?$|var/?$)"
+          }
+        }
+      ]
+    },
     "payloads": {
       "type": "array",
+      "maxItems": 64,
       "items": {
         "type": "object",
         "required": ["local_path", "remote_path"],
         "properties": {
-          "local_path": {"type": "string"},
-          "remote_path": {"type": "string", "pattern": "^/"},
+          "local_path": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "remote_path": {"$ref": "#/$defs/canonicalRemotePath"},
           "mode": {"type": "string", "pattern": "^0?[0-7]{3,4}$"}
         },
         "additionalProperties": false
@@ -43,31 +88,162 @@
     },
     "operations": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 4,
+      "maxItems": 64,
       "items": {
-        "type": "object",
-        "required": ["phase", "description", "command"],
-        "properties": {
-          "phase": {
-            "enum": [
-              "preflight",
-              "apply",
-              "validate",
-              "verify",
-              "rollback",
-              "rollback_verify"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["phase", "description", "check", "target"],
+            "properties": {
+              "phase": {"const": "preflight"},
+              "description": {"$ref": "#/$defs/reviewText"},
+              "check": {
+                "enum": [
+                  "path-exists",
+                  "file-exists",
+                  "file-sha256",
+                  "directory-exists",
+                  "command-exists",
+                  "service-exists",
+                  "service-active"
+                ]
+              },
+              "target": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "check": {
+                      "enum": ["path-exists", "file-exists", "file-sha256", "directory-exists"]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "target": {"$ref": "#/$defs/canonicalRemotePath"}
+                  }
+                }
+              },
+              {
+                "if": {"properties": {"check": {"const": "file-sha256"}}},
+                "then": {"required": ["sha256", "metadata_sha256"]},
+                "else": {
+                  "not": {
+                    "anyOf": [
+                      {"required": ["sha256"]},
+                      {"required": ["metadata_sha256"]}
+                    ]
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
           },
-          "description": {"type": "string", "minLength": 1},
-          "command": {"type": "string", "minLength": 1},
-          "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
-        },
-        "additionalProperties": false
+          {
+            "type": "object",
+            "required": ["phase", "description", "command", "affected_paths"],
+            "properties": {
+              "phase": {"const": "apply"},
+              "description": {"$ref": "#/$defs/reviewText"},
+              "command": {"$ref": "#/$defs/shellCommand"},
+              "affected_paths": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/canonicalRemotePath"}
+              },
+              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["phase", "description", "command"],
+            "properties": {
+              "phase": {
+                "enum": ["validate", "verify", "rollback", "rollback_verify"]
+              },
+              "description": {"$ref": "#/$defs/reviewText"},
+              "command": {"$ref": "#/$defs/shellCommand"},
+              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+            },
+            "additionalProperties": false
+          }
+        ]
       }
     },
     "restart_services": {
       "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
       "items": {"type": "string", "pattern": "^[A-Za-z0-9_.@-]+$"}
+    },
+    "control_channel": {
+      "description": "Omission is normalized to unknown and marks the review plan blocked; execution is unavailable in this release regardless of this value.",
+      "type": "object",
+      "required": [
+        "dependency",
+        "change_surfaces",
+        "continuity_strategy",
+        "independent_path_verified",
+        "operator_recovery_reviewed",
+        "host_reboot_planned"
+      ],
+      "properties": {
+        "dependency": {"enum": ["independent", "shared", "unknown"]},
+        "change_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "local-proxy-app",
+              "local-tun",
+              "local-dns",
+              "local-routes",
+              "local-firewall",
+              "remote-proxy-service",
+              "remote-network",
+              "remote-dns",
+              "remote-firewall",
+              "node-or-vps",
+              "unknown"
+            ]
+          }
+        },
+        "continuity_strategy": {
+          "enum": ["independent-path", "automatic-rollback", "manual-recovery"]
+        },
+        "independent_path_verified": {"type": "boolean"},
+        "operator_recovery_reviewed": {"type": "boolean"},
+        "host_reboot_planned": {"type": "boolean"},
+        "evidence": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 500,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rollback_timer": {
+      "type": "object",
+      "required": ["enabled", "delay_seconds"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "delay_seconds": {"type": "integer", "minimum": 120, "maximum": 3600}
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

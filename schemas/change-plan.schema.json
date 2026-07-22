@@ -2,7 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Con-Benksl/NetOps/schemas/change-plan.schema.json",
   "title": "NetOps Reviewed Change Plan",
+  "description": "Review artifact only. NetOps 0.2.0 does not execute or roll back this plan through CLI or Python APIs.",
   "type": "object",
+  "$defs": {
+    "canonicalRemotePath": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Canonical POSIX absolute path with one leading slash, no dot aliases, and no Unicode control/format characters.",
+      "pattern": "^(?!.*[\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB])/(?!/)(?:(?!\\.{1,2}(?:/|$))[^/\\\\]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*)?$"
+    },
+    "reviewText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$"
+    },
+    "shellCommand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384,
+      "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$"
+    }
+  },
   "required": [
     "schema_version",
     "plan_id",
@@ -17,16 +38,20 @@
     "backup_root",
     "payloads",
     "operations",
-    "restart_services"
+    "restart_services",
+    "control_channel",
+    "rollback_timer",
+    "rollback_contract",
+    "control_channel_guard"
   ],
   "properties": {
-    "schema_version": {"const": "1.0"},
-    "plan_id": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "schema_version": {"const": "2.0"},
+    "plan_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
     "created_at": {"type": "string"},
     "source_spec": {"type": "string"},
-    "name": {"type": "string", "minLength": 1},
-    "summary": {"type": "string", "minLength": 1},
-    "host_alias": {"type": "string", "minLength": 1},
+    "name": {"$ref": "#/$defs/reviewText"},
+    "summary": {"$ref": "#/$defs/reviewText"},
+    "host_alias": {"$ref": "#/$defs/reviewText"},
     "host": {
       "type": "object",
       "required": ["alias", "management", "ssh"],
@@ -37,17 +62,44 @@
       },
       "additionalProperties": false
     },
-    "invariants": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-    "backup_paths": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-    "backup_root": {"type": "string"},
+    "invariants": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/reviewText"}},
+    "backup_paths": {
+      "description": "Exact existing file targets with matching typed file-sha256 preflights bound to reviewed remote prestate.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "allOf": [
+          {"$ref": "#/$defs/canonicalRemotePath"},
+          {
+            "not": {
+              "pattern": "^/(?:$|boot/?$|dev(?:/|$)|etc/?$|home/?$|opt/?$|proc(?:/|$)|root/?$|run(?:/|$)|srv/?$|sys(?:/|$)|tmp/?$|usr/?$|var/?$)"
+            }
+          }
+        ]
+      }
+    },
+    "backup_root": {
+      "const": "/var/backups/netops",
+      "allOf": [
+        {"$ref": "#/$defs/canonicalRemotePath"},
+        {
+          "not": {
+            "pattern": "^/(?:$|boot/?$|dev(?:/|$)|etc/?$|home/?$|opt/?$|proc(?:/|$)|root/?$|run(?:/|$)|srv/?$|sys(?:/|$)|tmp/?$|usr/?$|var/?$)"
+          }
+        }
+      ]
+    },
     "payloads": {
       "type": "array",
+      "maxItems": 64,
       "items": {
         "type": "object",
         "required": ["local_path", "remote_path", "mode", "size", "sha256"],
         "properties": {
-          "local_path": {"type": "string"},
-          "remote_path": {"type": "string"},
+          "local_path": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "remote_path": {"$ref": "#/$defs/canonicalRemotePath"},
           "mode": {"type": "string"},
           "size": {"type": "integer", "minimum": 0},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
@@ -57,28 +109,249 @@
     },
     "operations": {
       "type": "array",
+      "minItems": 4,
+      "maxItems": 64,
       "items": {
-        "type": "object",
-        "required": ["phase", "description", "command", "timeout_seconds"],
-        "properties": {
-          "phase": {
-            "enum": [
-              "preflight",
-              "apply",
-              "validate",
-              "verify",
-              "rollback",
-              "rollback_verify"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["phase", "description", "check", "target", "timeout_seconds"],
+            "properties": {
+              "phase": {"const": "preflight"},
+              "description": {"$ref": "#/$defs/reviewText"},
+              "check": {
+                "enum": [
+                  "path-exists",
+                  "file-exists",
+                  "file-sha256",
+                  "directory-exists",
+                  "command-exists",
+                  "service-exists",
+                  "service-active"
+                ]
+              },
+              "target": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "check": {
+                      "enum": ["path-exists", "file-exists", "file-sha256", "directory-exists"]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "target": {"$ref": "#/$defs/canonicalRemotePath"}
+                  }
+                }
+              },
+              {
+                "if": {"properties": {"check": {"const": "file-sha256"}}},
+                "then": {"required": ["sha256", "metadata_sha256"]},
+                "else": {
+                  "not": {
+                    "anyOf": [
+                      {"required": ["sha256"]},
+                      {"required": ["metadata_sha256"]}
+                    ]
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
           },
-          "description": {"type": "string"},
-          "command": {"type": "string"},
-          "timeout_seconds": {"type": "integer"}
-        },
-        "additionalProperties": false
+          {
+            "type": "object",
+            "required": ["phase", "description", "command", "affected_paths", "timeout_seconds"],
+            "properties": {
+              "phase": {"const": "apply"},
+              "description": {"$ref": "#/$defs/reviewText"},
+              "command": {"$ref": "#/$defs/shellCommand"},
+              "affected_paths": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/canonicalRemotePath"}
+              },
+              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["phase", "description", "command", "timeout_seconds"],
+            "properties": {
+              "phase": {
+                "enum": ["validate", "verify", "rollback", "rollback_verify"]
+              },
+              "description": {"$ref": "#/$defs/reviewText"},
+              "command": {"$ref": "#/$defs/shellCommand"},
+              "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600}
+            },
+            "additionalProperties": false
+          }
+        ]
       }
     },
-    "restart_services": {"type": "array", "items": {"type": "string"}}
+    "restart_services": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_.@-]+$"}},
+    "control_channel": {
+      "type": "object",
+      "required": [
+        "dependency",
+        "change_surfaces",
+        "continuity_strategy",
+        "independent_path_verified",
+        "operator_recovery_reviewed",
+        "host_reboot_planned",
+        "evidence"
+      ],
+      "properties": {
+        "dependency": {"enum": ["independent", "shared", "unknown"]},
+        "change_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "local-proxy-app",
+              "local-tun",
+              "local-dns",
+              "local-routes",
+              "local-firewall",
+              "remote-proxy-service",
+              "remote-network",
+              "remote-dns",
+              "remote-firewall",
+              "node-or-vps",
+              "unknown"
+            ]
+          }
+        },
+        "continuity_strategy": {
+          "enum": ["independent-path", "automatic-rollback", "manual-recovery"]
+        },
+        "independent_path_verified": {"type": "boolean"},
+        "operator_recovery_reviewed": {"type": "boolean"},
+        "host_reboot_planned": {"type": "boolean"},
+        "evidence": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 500,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rollback_timer": {
+      "type": "object",
+      "required": ["enabled", "delay_seconds"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "delay_seconds": {"type": "integer", "minimum": 120, "maximum": 3600}
+      },
+      "additionalProperties": false
+    },
+    "rollback_contract": {
+      "type": "object",
+      "required": [
+        "declared_targets",
+        "covered_targets",
+        "uncovered_targets",
+        "preflight_file_targets",
+        "preflight_hashes",
+        "unverified_targets",
+        "inexact_backup_paths",
+        "restore_strategy",
+        "rollback_operations",
+        "minimum_delay_seconds",
+        "executable"
+      ],
+      "properties": {
+        "declared_targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/canonicalRemotePath"}
+        },
+        "covered_targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/canonicalRemotePath"}
+        },
+        "uncovered_targets": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {"$ref": "#/$defs/canonicalRemotePath"}
+        },
+        "preflight_file_targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/canonicalRemotePath"}
+        },
+        "preflight_hashes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["target", "sha256", "metadata_sha256"],
+            "properties": {
+              "target": {"$ref": "#/$defs/canonicalRemotePath"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "metadata_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "unverified_targets": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {"$ref": "#/$defs/canonicalRemotePath"}
+        },
+        "inexact_backup_paths": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {"$ref": "#/$defs/canonicalRemotePath"}
+        },
+        "restore_strategy": {
+          "const": "exact-existing-files-content-mode-owner-mtime-acl-xattr-selinux"
+        },
+        "rollback_operations": {"type": "integer", "minimum": 1},
+        "minimum_delay_seconds": {"type": "integer", "minimum": 1},
+        "executable": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "control_channel_guard": {
+      "type": "object",
+      "required": [
+        "decision",
+        "can_apply",
+        "execution_available",
+        "risk",
+        "reasons",
+        "next_action",
+        "emergency_steps"
+      ],
+      "properties": {
+        "execution_available": {"const": false}
+      }
+    }
   },
   "additionalProperties": false
 }

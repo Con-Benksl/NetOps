@@ -2,60 +2,185 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Con-Benksl/NetOps/schemas/fleet.schema.json",
   "title": "NetOps Private Fleet Overlay",
+  "$comment": "JSON Schema performs portable structural and high-confidence secret preflight. netops_core.fleet.validate_fleet remains authoritative for Unicode categories, IDNA hostname semantics, and the full credential heuristic set.",
+  "$defs": {
+    "reviewedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?!.*(?:[Pp][Aa][Ss][Ss](?:[Ww][Oo][Rr][Dd]|[Pp][Hh][Rr][Aa][Ss][Ee])|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][_-]?[Tt][Oo][Kk][Ee][Nn]|[Cc][Ll][Ii][Ee][Nn][Tt][_-]?[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Kk][Ee][Yy])\\s*[:=])(?!.*[Bb][Ee][Aa][Rr][Ee][Rr]\\s+[A-Za-z0-9._~+/=-]{8,})(?!.*(?:ss|ssr|vless|vmess|trojan|hysteria2?|hy2|tuic|wg|wireguard)://)(?!.*(?:gh[pousr]_|github_pat_|sk-(?:proj-|svcacct-|ant-api03-|or-v1-)|xox[baprs]-|glpat-|ya29\\.))[^\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u061C\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u206F\\uFEFF\\uFFF9-\\uFFFB]+$"
+    },
+    "nullableReviewedText": {
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/reviewedText"}
+      ]
+    },
+    "domainName": {
+      "allOf": [
+        {"$ref": "#/$defs/reviewedText"},
+        {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^(?!(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\.?$)(?!.*[\\s:/@?#])(?!.*\\.\\.)(?:[^.\\s:/@?#-](?:[^.\\s:/@?#]*[^.\\s:/@?#-])?\\.)*[^.\\s:/@?#-](?:[^.\\s:/@?#]*[^.\\s:/@?#-])?\\.?$"
+        }
+      ]
+    },
+    "safeMetadataKey": {
+      "allOf": [
+        {"$ref": "#/$defs/reviewedText"},
+        {
+          "not": {
+            "pattern": "^(?:[Pp][Aa][Ss][Ss](?:[Ww][Oo][Rr][Dd]|[Pp][Hh][Rr][Aa][Ss][Ee])|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Kk][Ee][Yy]|[Uu][Uu][Ii][Dd])$"
+          }
+        }
+      ]
+    }
+  },
   "type": "object",
   "required": ["schema_version", "fleet_name", "hosts"],
   "properties": {
-    "schema_version": {"const": "1.0"},
-    "fleet_name": {"type": "string", "minLength": 1},
+    "schema_version": {"const": "2.0"},
+    "fleet_name": {"$ref": "#/$defs/reviewedText", "maxLength": 128},
     "hosts": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 256,
       "items": {
         "type": "object",
         "required": ["alias", "role", "management", "ssh", "domains"],
         "properties": {
-          "alias": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
-          "role": {"type": "string"},
+          "alias": {
+            "$ref": "#/$defs/reviewedText",
+            "maxLength": 63,
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+          },
+          "role": {
+            "$ref": "#/$defs/reviewedText",
+            "maxLength": 128,
+            "type": "string"
+          },
           "management": {
             "type": "object",
             "required": ["address"],
             "properties": {
-              "address": {"type": "string", "minLength": 1},
-              "panel_reference": {"type": ["string", "null"]}
+              "address": {
+                "$ref": "#/$defs/reviewedText",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?!-)(?!.*[\\u0000\\r\\n@/\\s]).+$"
+              },
+              "panel_reference": {"$ref": "#/$defs/nullableReviewedText"}
             },
             "additionalProperties": false
           },
           "ssh": {
             "type": "object",
             "properties": {
-              "user": {"type": ["string", "null"]},
+              "user": {
+                "anyOf": [
+                  {"type": "null"},
+                  {
+                    "$ref": "#/$defs/reviewedText",
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$"
+                  }
+                ]
+              },
               "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-              "config_host": {"type": ["string", "null"]},
-              "identity_file": {"type": ["string", "null"]},
-              "credential_reference": {"type": ["string", "null"]},
+              "config_host": {
+                "anyOf": [
+                  {"type": "null"},
+                  {
+                    "$ref": "#/$defs/reviewedText",
+                    "maxLength": 253,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$"
+                  }
+                ]
+              },
+              "identity_file": {"$ref": "#/$defs/nullableReviewedText"},
+              "credential_reference": {"$ref": "#/$defs/nullableReviewedText"},
               "password_env": {
-                "type": ["string", "null"],
-                "pattern": "^[A-Z][A-Z0-9_]*$"
+                "anyOf": [
+                  {"type": "null"},
+                  {
+                    "$ref": "#/$defs/reviewedText",
+                    "maxLength": 128,
+                    "pattern": "^[A-Z][A-Z0-9_]*$"
+                  }
+                ]
               }
             },
+            "allOf": [
+              {
+                "if": {
+                  "required": ["config_host"],
+                  "properties": {"config_host": {"type": "string"}}
+                },
+                "then": {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": ["user"],
+                        "properties": {"user": {"type": "string"}}
+                      },
+                      {"required": ["port"]},
+                      {
+                        "required": ["identity_file"],
+                        "properties": {"identity_file": {"type": "string"}}
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
             "additionalProperties": false
           },
           "domains": {
             "type": "object",
             "properties": {
-              "ipv4": {"type": "array", "items": {"type": "string"}},
-              "ipv6": {"type": "array", "items": {"type": "string"}},
-              "panel": {"type": "array", "items": {"type": "string"}}
+              "ipv4": {
+                "type": "array",
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/domainName"}
+              },
+              "ipv6": {
+                "type": "array",
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/domainName"}
+              },
+              "panel": {
+                "type": "array",
+                "maxItems": 64,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/domainName"}
+              }
             },
             "additionalProperties": false
           },
           "expected_services": {
             "type": "array",
-            "items": {"type": "string"}
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/$defs/reviewedText",
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_.@-]+$"
+            }
           },
           "labels": {
             "type": "object",
-            "additionalProperties": {"type": "string"}
+            "maxProperties": 64,
+            "propertyNames": {
+              "$ref": "#/$defs/safeMetadataKey",
+              "maxLength": 64
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/reviewedText",
+              "maxLength": 256
+            }
           }
         },
         "additionalProperties": false,

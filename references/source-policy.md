@@ -31,3 +31,11 @@
 - Cloudflare IPv6 behavior: https://developers.cloudflare.com/network/ipv6-compatibility/
 
 外部服务只在任务需要时调用，并向用户说明会发送哪些最小数据。
+
+## 外部工具
+
+- 精选清单、权限和兼容基线见 `curated-tools.md`。
+- 已安装工具的结构化输出仍要记录版本、观察点、目标、时间、限制和原始返回状态。
+- 不把工具热度、星标数量或聚合评分当作正确性证明。
+- 不通过 `curl | bash` 运行浮动版本；使用系统包或经过审核的官方稳定版本，并在升级后重新验证参数和输出结构。
+- GPL/AGPL 工具作为独立程序调用。NetOps 不复制其源码，也不删除其来源和许可证信息。

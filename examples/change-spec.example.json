@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0",
-  "name": "replace validated service configuration",
-  "summary": "Deploy one prepared configuration while preserving unrelated services and the default route.",
+  "schema_version": "2.0",
+  "name": "review a proposed service configuration replacement",
+  "summary": "Review a proposed deployment contract; NetOps 0.2.0 will not execute it.",
   "host_alias": "edge-a",
   "invariants": [
     "SSH remains reachable",
@@ -12,6 +12,23 @@
     "/etc/example/service.json"
   ],
   "backup_root": "/var/backups/netops",
+  "control_channel": {
+    "dependency": "independent",
+    "change_surfaces": [
+      "remote-proxy-service"
+    ],
+    "continuity_strategy": "independent-path",
+    "independent_path_verified": true,
+    "operator_recovery_reviewed": true,
+    "host_reboot_planned": false,
+    "evidence": [
+      "The management connection was verified through a path that does not use this service."
+    ]
+  },
+  "rollback_timer": {
+    "enabled": false,
+    "delay_seconds": 600
+  },
   "payloads": [
     {
       "local_path": "payload/service.json",
@@ -22,8 +39,17 @@
   "operations": [
     {
       "phase": "preflight",
-      "description": "Confirm the target file and service exist",
-      "command": "test -f /etc/example/service.json && systemctl cat example.service >/dev/null"
+      "description": "Confirm the target configuration exists",
+      "check": "file-sha256",
+      "target": "/etc/example/service.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "metadata_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "phase": "preflight",
+      "description": "Confirm the service unit exists",
+      "check": "service-exists",
+      "target": "example.service"
     },
     {
       "phase": "validate",
@@ -34,6 +60,11 @@
       "phase": "verify",
       "description": "Verify the service is active after restart",
       "command": "systemctl is-active --quiet example.service"
+    },
+    {
+      "phase": "rollback",
+      "description": "Reload unit metadata after the built-in backup restore",
+      "command": "systemctl daemon-reload"
     },
     {
       "phase": "rollback_verify",

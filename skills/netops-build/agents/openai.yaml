@@ -1,4 +1,4 @@
 interface:
   display_name: "NetOps · 搭建与修改"
   short_description: "安全搭建面板、节点、域名和节点专属出口"
-  default_prompt: "用 $netops-build 先审计现状并生成变更计划，再安全搭建或修改节点。"
+  default_prompt: "用 $netops-build 先给我只读审计、生成计划和审核并交接的选项，并解释区别；本版本不执行远程写入或自动回滚。"

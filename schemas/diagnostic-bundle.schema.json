@@ -2,6 +2,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Con-Benksl/NetOps/schemas/diagnostic-bundle.schema.json",
   "title": "NetOps Diagnostic Bundle",
+  "$defs": {
+    "boundedJsonValue": {
+      "anyOf": [
+        {"type": ["null", "boolean", "number"]},
+        {"type": "string", "maxLength": 1048576},
+        {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {"$ref": "#/$defs/boundedJsonValue"}
+        },
+        {
+          "type": "object",
+          "maxProperties": 10000,
+          "additionalProperties": {"$ref": "#/$defs/boundedJsonValue"}
+        }
+      ]
+    }
+  },
   "type": "object",
   "required": [
     "schema_version",
@@ -18,20 +36,114 @@
     "targets"
   ],
   "properties": {
-    "schema_version": {"const": "1.0"},
+    "schema_version": {"const": "2.0"},
     "run_id": {"type": "string", "format": "uuid"},
-    "mode": {"type": "string", "minLength": 1},
-    "started_at": {"type": "string"},
-    "completed_at": {"type": ["string", "null"]},
-    "vantage_points": {"type": "array", "items": {"type": "string"}},
-    "environment": {"type": "object"},
-    "targets": {"type": "array", "items": {"type": "object"}},
-    "path_segments": {"type": "array", "items": {"type": "object"}},
-    "findings": {"type": "array", "items": {"type": "object"}},
-    "limitations": {"type": "array", "items": {"type": "string"}},
-    "redactions": {"type": "array", "items": {"type": "string"}},
+    "mode": {"type": "string", "minLength": 1, "maxLength": 1048576},
+    "started_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": ["string", "null"], "format": "date-time"},
+    "vantage_points": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"type": "string", "maxLength": 1048576}
+    },
+    "environment": {
+      "type": "object",
+      "maxProperties": 10000,
+      "additionalProperties": {"$ref": "#/$defs/boundedJsonValue"}
+    },
+    "targets": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "maxProperties": 10000,
+        "additionalProperties": {"$ref": "#/$defs/boundedJsonValue"}
+      }
+    },
+    "path_segments": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "evidence",
+          "limitations",
+          "vantage_points",
+          "observed_at",
+          "confidence"
+        ],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 1048576},
+          "status": {
+            "type": "string",
+            "enum": ["observed", "partially-observed", "failed", "unknown", "ok"]
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {"type": "string", "format": "uuid"}
+          },
+          "limitations": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {"type": "string", "maxLength": 1048576}
+          },
+          "vantage_points": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10000,
+            "items": {"type": "string", "minLength": 1, "maxLength": 1048576}
+          },
+          "observed_at": {"type": "string", "format": "date-time"},
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "required": ["severity", "segment", "title", "evidence", "confidence"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["info", "warning", "error", "critical"]
+          },
+          "segment": {"type": "string", "minLength": 1, "maxLength": 1048576},
+          "title": {"type": "string", "minLength": 1, "maxLength": 1048576},
+          "evidence": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {"type": "string", "format": "uuid"}
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"type": "string", "maxLength": 1048576}
+    },
+    "redactions": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"type": "string", "maxLength": 1048576}
+    },
     "observations": {
       "type": "array",
+      "maxItems": 10000,
       "items": {
         "type": "object",
         "required": [
@@ -48,18 +160,30 @@
         ],
         "properties": {
           "observation_id": {"type": "string", "format": "uuid"},
-          "observed_at": {"type": "string"},
-          "vantage_point": {"type": "string"},
-          "segment": {"type": "string"},
-          "probe": {"type": "string"},
+          "observed_at": {"type": "string", "format": "date-time"},
+          "vantage_point": {"type": "string", "maxLength": 1048576},
+          "segment": {"type": "string", "maxLength": 1048576},
+          "probe": {"type": "string", "maxLength": 1048576},
           "status": {"enum": ["ok", "failed", "unknown"]},
-          "target": {"type": ["string", "null"]},
-          "protocol": {"type": ["string", "null"]},
-          "address_family": {"type": ["string", "null"]},
-          "metrics": {"type": "object"},
-          "evidence": {"type": "object"},
+          "target": {"type": ["string", "null"], "maxLength": 1048576},
+          "protocol": {"type": ["string", "null"], "maxLength": 1048576},
+          "address_family": {"type": ["string", "null"], "maxLength": 1048576},
+          "metrics": {
+            "type": "object",
+            "maxProperties": 10000,
+            "additionalProperties": {"$ref": "#/$defs/boundedJsonValue"}
+          },
+          "evidence": {
+            "type": "object",
+            "maxProperties": 10000,
+            "additionalProperties": {"$ref": "#/$defs/boundedJsonValue"}
+          },
           "confidence": {"enum": ["high", "medium", "low"]},
-          "limitations": {"type": "array", "items": {"type": "string"}}
+          "limitations": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {"type": "string", "maxLength": 1048576}
+          }
         },
         "additionalProperties": false
       }

@@ -51,7 +51,7 @@ class BundleRedactionTests(unittest.TestCase):
         self.assertIn("ip-address", manifest["redactions"])
         self.assertIn("hostname", manifest["redactions"])
         self.assertEqual(inspected.run_id, bundle.run_id)
-        self.assertEqual(inspected.schema_version, "1.0")
+        self.assertEqual(inspected.schema_version, "2.0")
         self.assertIn("NetOps 诊断报告", report)
 
 

@@ -4,7 +4,7 @@ VPS 网络出问题时，真正麻烦的往往不是少了一条命令，而是�
 
 NetOps 就是用来查这件事的。它包含一组可供 Codex 使用的 Agent Skills，以及一个只依赖 Python 标准库的诊断工具。你可以直接用中文描述问题，也可以在命令行里运行扫描。
 
-它的做事顺序很简单：**先扫描，再判断；先给方案，再改服务器。** 没有明确授权、备份和回滚方案时，NetOps 不会直接修改远程配置。
+它的做事顺序很简单：**先扫描，再判断；先保护 Codex 的联网通道，再改网络。** 本版本在任何条件下都不会通过 NetOps 直接修改远程配置；授权、备份和回滚合同只是交给外部人工流程继续审核的前置材料。
 
 ## 什么时候适合用
 
@@ -37,6 +37,7 @@ NetOps 会从当前能够访问的观察点收集信息：
 | VPS | 资源占用、系统时间、路由、策略路由、防火墙、监听端口和服务状态 |
 | 代理节点 | 域名解析、TCP/UDP 连通、TLS 握手、HTTP 响应和各步骤耗时 |
 | 3x-ui/Xray | 版本、服务状态和常见配置文件是否存在；变更前再核对入站、出站和路由 |
+| 专项工具 | 按问题选择 MTR、NextTrace、dnsdiag、testssl.sh、IPQuality 或 iperf3，不会默认全部运行 |
 | 两台设备对比 | 在目标、协议和时间窗口一致时比较两份诊断结果 |
 
 运营商和代理服务商的内部网络通常无法完全看见。报告会把这类区段标成“无法观测”，不会拿一次 traceroute 或 ASN 查询冒充完整线路图。
@@ -45,11 +46,15 @@ NetOps 会从当前能够访问的观察点收集信息：
 
 ### 方式一：作为 Codex Skill 使用
 
-全局安装：
+需要 Node.js 22.20.0 或更高版本。从已审查的精确发布标签安装。不要把浮动分支或 `latest` 管道直接交给 shell；下面的 CLI 版本和 NetOps 标签都固定。安装器在 Codex 环境中可能自动进入非交互模式，因此先用只读列表确认恰好发现 `netops` 和五个子 Skill，再单独执行安装：
 
 ```bash
-NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills add Con-Benksl/NetOps -g -y
+git clone --branch v0.2.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -l --full-depth
+NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
 ```
+
+发布者尚未创建 `v0.2.0` 标签时，这条命令应当失败；不要退回 `main` 或自动选择最新提交。
 
 安装后，直接描述你遇到的情况即可。例如：
 
@@ -60,26 +65,73 @@ NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills add Con-Benksl/NetOps -g -y
 
 帮我规划一个新的 VLESS Reality 入站，旧节点和 VPS 默认出口都不能改变。
 
-给这个节点安装故障监控，但先只显示计划，不要执行。
+给这个节点生成故障监控调度审查计划，不安装任务。
 ```
 
-如果信息不够，NetOps 会优先建议只读扫描。需要改服务器时，它会先说明准备改什么、如何验证以及怎样回滚，再等待授权。
+你不需要先弄懂所有术语。如果一句话里还缺少关键条件，NetOps 会给出少量带解释的选项：
+
+```text
+目前还不知道问题在客户端还是服务器，先选一个观察范围：
+
+1. 当前设备（推荐）：先做本机只读扫描，不会连接或修改 VPS。
+2. VPS：检查服务、监听、路由和资源，需要确认 SSH 授权。
+3. 节点全链路：同时收集客户端、VPS 和目标站证据，耗时更长但归因更完整。
+```
+
+每轮最多出现 3 个问题，每题只有 2–3 个选项。推荐项会放在前面，每个选项都会说明接下来做什么、有什么限制。能自动扫描出来的信息不会反过来让你猜；你的目标已经明确时，也不会强制弹出菜单。
+
+如果信息不够，NetOps 会优先建议只读扫描。需要改服务器时，它会先说明准备改什么、如何验证以及怎样回滚，并生成可审核计划。本版本不发布远程写入执行器：`netopsctl change apply` 和 `netopsctl change rollback` 都会在读取计划、创建回执或连接 SSH 前无条件拒绝，公开 CLI 和 Python API 均不提供执行授权开关，也没有环境变量或隐藏参数可以绕过。实际变更需在本工具之外另行审核和执行。
+
+## 修网络时，怎样避免 Codex 自己掉线
+
+很多人使用 Codex 时本来就开着代理。如果 Codex 正在经过某个代理应用、TUN、节点或 VPS，而修复操作恰好要重启它，Codex 可能和网络一起断开，后面的验证和回滚也无法继续。
+
+NetOps 会把这件事当作所有流程共同遵守的底层安全门：
+
+1. 先确认 Codex 当前经过哪些代理、TUN、节点和 VPS。
+2. 对照本次准备修改的组件，判断两条路径是否重合。
+3. 路径未知时，只能扫描和生成计划，不能自动执行。
+4. 路径重合时，优先切到真正独立的网络、代理进程或设备。
+5. 本版本不会自动武装远端回滚或执行写入；把计划中的回滚合同当作人工审核材料，不能当作已经存在的恢复保护。
+6. 用户需要手动操作时，Codex 每次只给一个动作，同时说明预期结果、异常处理和撤销方式。
+
+同一个代理软件里的“备用节点”通常不算独立通道，因为重启软件或 TUN 时所有节点会一起中断。手机热点、另一台设备、独立代理进程或提前验证过的服务商控制台更可靠。
+
+如果已经失联，先不要删除配置或反复重装。关闭测试中的 TUN/失效系统代理，切换到已知可用的独立网络，恢复普通 HTTPS 后重新打开 Codex，再把计划 ID、备份位置和最后一步交给它继续处理。完整步骤见 [`references/control-channel-safety.md`](references/control-channel-safety.md)。
 
 ### 方式二：直接运行命令行工具
 
-需要 Python 3.10 或更高版本：
+需要 Python 3.10–3.14：
 
 ```bash
-git clone https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.2.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 cd NetOps
 python3 scripts/netopsctl.py --help
 ```
+
+这里同样要求 `v0.2.0` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
+
+`0.2.0` 将诊断包、私有 fleet 覆盖和变更计划三项公开 JSON 合同统一升级为 `schema_version: "2.0"`。仓库早期 `0.1.0` 仅是预发布原型，其 `1.0` 工件不属于兼容承诺；本版本会明确拒绝，且不会做可能改变证据含义的静默迁移。监控本地配置/所有权清单以及支持包容器各自的内部 `1.0` 格式不在这次公共合同升级范围内。
 
 扫描当前电脑：
 
 ```bash
 python3 scripts/netopsctl.py scan client --output client.json
 ```
+
+在任何网络变更前，可以先做控制通道初步判断。例如，下面表示 Codex 已经通过一条不经过待修改服务的独立管理路径完成实测：
+
+```bash
+python3 scripts/netopsctl.py safety assess \
+  --dependency independent \
+  --surface remote-proxy-service \
+  --strategy independent-path \
+  --independent-path-verified \
+  --recovery-reviewed \
+  --evidence "alternate management path verified"
+```
+
+输出中的 `guard.decision` / `can_apply` 只表示控制通道审核条件是否满足，不是执行许可；`execution_available` 在本版本固定为 `false`。本版本只保留 `change plan`：它会根据变更目标、备份覆盖、回滚步骤和各阶段最长耗时生成计划绑定的审核合同；`change apply` 与 `change rollback` 无论审核结果为何都会 fail-closed。只写“可以手动恢复”也不会改变这条发布边界。
 
 这条命令会生成两个文件：供程序读取的 `client.json`，以及适合直接阅读的 `client.md`。如果还需要确认公网出口，可以主动加上 `--external`：
 
@@ -98,18 +150,51 @@ python3 scripts/netopsctl.py scan node \
   --output node.json
 ```
 
+### 精选工具
+
+内置扫描回答不了下一步时，NetOps 可以接入六个维护活跃、输出可解析的工具：
+
+| 工具 | 用来查什么 | 默认限制 |
+| --- | --- | --- |
+| MTR | 持续延迟、抖动和丢包 | 5 轮，只测声明的目标 |
+| NextTrace | TCP/UDP 去程快照 | 3 次采样、30 跳，默认关闭第三方 GeoIP |
+| dnsdiag | 指定 DNS 的延迟和丢包 | 必须明确提供解析器 |
+| testssl.sh | TLS 协议、证书和默认参数 | 聚焦检查，不做批量扫描 |
+| IPQuality | 当前出口的信誉与分类线索 | 隐私模式、不安装依赖，但仍会查询多个提供商 |
+| iperf3 | 两个自有端点间的受控性能样本 | 5 秒限速，并需单独确认流量测试 |
+
+先检查当前电脑上有哪些工具，不会发起网络探测：
+
+```bash
+python3 scripts/netopsctl.py tools list
+python3 scripts/netopsctl.py tools status --versions
+```
+
+状态中的 `detected` 只表示发现了本地文件；只有版本、参数能力和必要校验全部通过时，`usable`（以及兼容字段 `available`）才会是 `true`。
+
+例如，对一个已声明的 HTTPS 节点增加 5 轮 MTR：
+
+```bash
+python3 scripts/netopsctl.py scan node \
+  --target example.com --port 443 --protocol tcp --tls \
+  --tool mtr --external --output node-mtr.json
+```
+
+节点扫描中的 `--external` 表示你同意所选工具向说明过的目标、解析器或服务商发出请求。客户端或本机服务器扫描必须改用独立的 `--tool-external`，这样工具授权不会被误当成公网出口身份查询授权。iperf3 还需要 `--allow-load`；IPQuality 等脚本不会被自动下载，缺失时会给出官方来源和路径设置方法。详细兼容规则见 [`references/curated-tools.md`](references/curated-tools.md)。
+
 比较两份条件一致的节点诊断包：
 
 ```bash
 python3 scripts/netopsctl.py scan compare left.json right.json --output comparison.json
 ```
 
-先查看监控安装计划，不写入系统任务：
+生成不可执行的监控调度审查计划，不写入系统任务。Linux 源码目录通常不满足 root 信任链，系统级计划会明确标为 `blocked`；本地试阅请使用 `--scope user`。输出会包含探测目标和完整本地配置草案，不要把 stdout 当作已脱敏支持包分享：
 
 ```bash
 python3 scripts/netopsctl.py monitor install \
   --target example.com \
   --port 443 \
+  --scope user \
   --dry-run
 ```
 
@@ -135,6 +220,15 @@ netopsctl --help
 
 先看“异常区段”和“推荐下一步”就够了。延迟高、某一跳丢包或者公网 IP 变化都只是线索，不能单独证明故障原因。
 
+需要把结果交给别人时，导出经过校验的支持包：
+
+```bash
+netopsctl bundle export diagnostics/node.json --output node-support.zip
+netopsctl bundle inspect node-support.zip --report-output node-support-review.md
+```
+
+支持包必须使用 `.zip`；默认移除 IP、域名、IDN、MAC、用户目录、凭据，以及出现在值、主机语境或显式 `*_by_host`/`hosts` 映射中的单标签主机。任意 JSON 单词键无法可靠区分“字段名”和“主机名”，因此动态的主机键映射必须采用上述显式命名；否则导出器会把键当作字段名保留。导出器会用结构化规则和高置信启发式检查拒绝疑似残留凭据，但任何启发式都无法证明任意不透明字符串必然安全；对外分享前仍须人工复核归档内容。归档内 SHA-256 只验证三个成员彼此自洽、未在检查后被静默改写，不是数字签名，也不能证明文件来自哪台设备或哪位操作者。源文件、目标 ZIP、检查报告以及扫描隐式生成的 Markdown 都不会静默覆盖已有文件；若确实要重用文件名，应先人工归档旧证据。只有明确使用 `--include-network-identifiers` 才会保留网络标识。
+
 ## 五个工作流程
 
 日常使用只需要记住总入口 `netops`。它会根据问题选择下面一个主要流程：
@@ -143,26 +237,29 @@ netopsctl --help
 | --- | --- |
 | `netops-start` | 解释术语，帮助第一次接触 VPS 的用户确定从哪里开始 |
 | `netops-scan` | 扫描客户端、VPS、节点和当前可见的传输路径 |
-| `netops-build` | 搭建或修改 3x-ui、Xray、节点、DNS、TLS 和专属出口 |
+| `netops-build` | 审计现状并规划 3x-ui、Xray、节点、DNS、TLS、专属出口或标准变更；本版本不执行 |
 | `netops-fix` | 诊断断连、超时、TUN、DNS、IPv6 和目标站拒绝等问题 |
-| `netops-manage` | 处理监控、备份、升级、安全、容量和多 VPS 标准化 |
+| `netops-manage` | 审查监控方案与已有数据，并规划备份、升级、安全、容量、舰队标准/漂移和用户生命周期；本版本不安装调度任务或执行远程写入 |
 
 协议说明和具体故障案例放在 `references/` 中，不会因为多了一个网站或运营商就再增加一套 Skill。
 
-## 监控会保存什么
+## 监控发布边界与数据
 
-默认监控每 60 秒做一次轻量检测，每 15 分钟保存一份完整状态。连续失败 3 次后，会临时改为每 5 秒记录一次，持续 10 分钟，并分别保存故障发生和恢复时的快照。
+本版本不发布调度器安装、停止或删除能力。`monitor install/remove` 只在显式 `--dry-run` 时生成不可执行的审查材料；非 dry-run 无条件拒绝，公开 CLI 和 Python API 都没有可开启执行的授权参数，也不存在环境变量或私有函数旁路。`monitor status` 只检查已有本地文件、权限、生命周期标记和 SHA-256 清单，不调用 systemd、launchd 或 Task Scheduler，因此不能证明真实定时任务存在或正在运行。
 
-数据只保存在本机，默认保留 7 天或最多 200 MB，以先达到的限制为准。NetOps 不会默认保存数据包内容；临时抓包需要单独授权，并且必须限制时间。
+隐藏的 `monitor sample` 仅用于继续读取由早期兼容版本正确配置、使用规范绝对路径、私有权限、有效所有权标记和匹配清单的本地状态；它不是新安装入口。此兼容采样每 60 秒做轻量检测、每 15 分钟增加一次本机只读检查，连续失败 3 次后可短时增强采样。长期快照只保存匿名状态、有限数值指标、明确观测点、时间、置信度、限制和受控枚举，不保存探测目标、主机名、原始命令输出、Header 或节点链接。受管数据保留 7 天或最多 200 MB，以先达到的限制为准；不抓取数据包，也不运行 traceroute、信誉查询或带宽测试。
 
-桌面系统使用现成的计划任务：Linux 用 systemd timer，macOS 用 launchd，Windows 用 Task Scheduler。项目不会额外安装一个长期以高权限运行的自研守护进程。
+审查材料会展示未来可能使用的原生调度器结构（Linux systemd timer、macOS launchd、Windows Task Scheduler），但不要复制执行其中命令。本版本也不会安装长期高权限自研守护进程。
 
 ## 数据和隐私
 
 - 公网 IP 查询只有在明确使用 `--external` 时才会发生。
+- 精选外部工具只有在显式指定 `--tool` 及其对应授权参数时才会运行：节点扫描使用 `--external`，客户端和本机服务器扫描使用 `--tool-external`；高流量工具还需要独立授权。
+- NetOps 不会通过 `curl | bash` 静默下载浮动版本，也不会让外部脚本自动安装系统依赖。
 - 导出的诊断包默认会隐藏 IP、域名、用户目录和疑似凭据。
-- 密码、私钥、节点链接、UUID、代理账号和 API Token 不应写入仓库或报告。
-- 公开仓库只提供匿名示例。真实主机资料应放在符合 `schemas/fleet.schema.json` 的私有覆盖仓库中。
+- 客户端控制通道扫描只保存系统代理是否启用，不保存 PAC URL、代理地址或代理环境变量的值。
+- 密码、私钥、节点链接、用户/节点/凭据 UUID、代理账号和 API Token 不应写入仓库或报告。NetOps 自己生成的 `run_id`、`observation_id` 及其证据引用是诊断外键，会保留在本地 JSON 和报告中。
+- 公开仓库只提供匿名示例。真实主机资料应放在符合 `schemas/fleet.schema.json` 的私有覆盖仓库中；该 Schema 负责可移植的结构与高置信凭据预检，CLI 加载时还会执行权威的 IDNA、Unicode 类别和完整语义复核，两层都必须通过。
 - 扫描只适用于你拥有或明确获准管理的设备。
 
 ## NetOps 不会做什么
@@ -171,7 +268,9 @@ netopsctl --help
 - 不把“端口能连通”直接解释成 VLESS、Hysteria2 等协议一定正常。
 - 不承诺还原运营商和服务商内部无法观测的完整物理线路。
 - 不会为了修一个节点，默认改变整台 VPS 的出口或覆盖已有配置。
-- 不会在没有计划 ID、明确授权、备份和回滚信息时执行远程变更。
+- 本版本不会通过 `netopsctl` 执行任何远程变更或远端恢复；`change apply` / `change rollback` 始终拒绝。
+- 本版本不会安装、停止或删除本地调度任务；监控 install/remove 只有不可执行的 dry-run 审查材料。
+- 不会在 Codex 控制通道未知，或只准备了同一代理应用内的备用节点时重启活动网络路径。
 
 ## 开发与测试
 
@@ -181,9 +280,22 @@ netopsctl --help
 python3 -m unittest discover -s tests -v
 python3 scripts/check_secrets.py .
 python3 scripts/validate_skills.py
+python3 scripts/release_check.py .
 ```
 
-CI 会在 Linux、macOS 和 Windows 上测试 Python 3.10 与 3.12。平台专属命令使用夹具和命令生成测试验证，不会在 CI 中连接真实 VPS。
+发布制品必须经过双构建门禁。先安装项目固定的构建工具，再传入明确的 Unix 时间戳和一个尚不存在的输出目录：
+
+```bash
+python3 -m pip install "build==1.3.0" "setuptools==83.0.0"
+python3 scripts/reproducible_build.py . --source-date-epoch 1720000000 --output-dir release-dist
+python3 scripts/package_smoke.py . --dist-dir release-dist
+```
+
+`1720000000` 是 CI 使用的稳定参考值；正式标签发布时应改用标签提交的 committer timestamp，并在发布记录中保存该值。脚本会从同一份净化快照复制两个构建目录，强制核对工具版本，要求两个 wheel 原始字节一致，并在清除 sdist 的 gzip 文件名、构建时间、PAX 时间及本机用户/组信息后要求两个规范化 sdist 的字节一致。只有两项检查都通过，才会创建输出目录；已有文件、目录或符号链接都会被拒绝，脚本不会覆盖它们。随后 `package_smoke.py` 会从最终规范化的 sdist 运行完整测试，并分别安装 wheel 和 sdist 做任意目录烟测。
+
+这个门禁证明的是同一源码快照在同一受控 Python、setuptools、build 和运行环境中的可复现性。它不宣称不同操作系统、不同 GitHub runner 镜像、不同 Python 补丁版本或不同 zlib 版本之间必然得到相同字节；需要长期重建时，还应记录这些版本和最终 SHA-256，或固定发布容器摘要。
+
+CI 覆盖 Python 3.10–3.14：每个小版本至少在 Linux 运行，3.10、3.12、3.14 还覆盖 macOS 和 Windows；每个环境都会运行双构建门禁，并从最终规范化制品安装后执行任意目录烟测。平台专属命令使用夹具和命令生成测试验证，不会在 CI 中连接真实 VPS 或修改调度器。
 
 ## 开源许可
 
