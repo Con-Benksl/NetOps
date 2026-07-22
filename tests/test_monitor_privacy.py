@@ -56,13 +56,11 @@ def mark_monitor_owned(paths: dict[str, Path]) -> None:
         if key in {"config", "service", "timer", "plist"}
         and path.exists()
     }
-    (state / STATE_MANIFEST_NAME).write_text(
-        json.dumps({"schema_version": "1.0", "files": files}),
-        encoding="utf-8",
+    (state / STATE_MANIFEST_NAME).write_bytes(
+        json.dumps({"schema_version": "1.0", "files": files}).encode("utf-8")
     )
-    (state / STATE_MARKER_NAME).write_text(
-        STATE_MARKER_CONTENT,
-        encoding="utf-8",
+    (state / STATE_MARKER_NAME).write_bytes(
+        STATE_MARKER_CONTENT.encode("utf-8")
     )
     if os.name != "nt":
         state.chmod(0o700)
