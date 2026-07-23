@@ -24,6 +24,7 @@ REQUIRES_PYTHON_LINE = re.compile(
 )
 REQUIRED_SDIST_FILES = (
     "README.md",
+    "README.zh-CN.md",
     "LICENSE",
     "SKILL.md",
     "pyproject.toml",

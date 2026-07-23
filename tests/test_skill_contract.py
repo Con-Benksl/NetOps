@@ -237,23 +237,45 @@ class SkillContractTests(unittest.TestCase):
         for tool in ("MTR", "NextTrace", "dnsdiag", "testssl.sh", "IPQuality", "iperf3"):
             self.assertIn(tool, reference.read_text(encoding="utf-8"))
 
-    def test_readme_pins_install_prerequisites_and_full_skill_discovery(self):
-        text = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("Node.js 22.20.0", text)
-        self.assertIn("npx skills@1.5.19", text)
-        self.assertIn("-l --full-depth", text)
-        self.assertIn("--agent codex --full-depth --skill '*'", text)
-        self.assertEqual(
-            text.count(
-                "git clone --branch v0.3.1 --depth 1 "
-                "https://github.com/Con-Benksl/NetOps.git"
-            ),
-            2,
+    def test_readmes_pin_install_prerequisites_and_full_skill_discovery(self):
+        readmes = {
+            "English": (ROOT / "README.md").read_text(encoding="utf-8"),
+            "Chinese": (ROOT / "README.zh-CN.md").read_text(encoding="utf-8"),
+        }
+        shared_contracts = (
+            "direct-ssh-or-plan",
+            "exact-plan",
+            "manual-local-control-plane",
+            "netopsctl scan client",
+            "netopsctl scan node",
+            "netopsctl bundle export",
+            "netopsctl change apply",
+            "netopsctl monitor install",
+            "--include-network-identifiers",
+            "v0.3.0",
+            "v0.3.1",
         )
-        self.assertNotIn(
-            "git clone https://github.com/Con-Benksl/NetOps.git",
-            text,
-        )
+        for language, text in readmes.items():
+            with self.subTest(language=language):
+                self.assertIn("Node.js 22.20.0", text)
+                self.assertIn("npx skills@1.5.19", text)
+                self.assertIn("-l --full-depth", text)
+                self.assertIn("--agent codex --full-depth --skill '*'", text)
+                for phrase in shared_contracts:
+                    self.assertIn(phrase, text)
+                self.assertEqual(
+                    text.count(
+                        "git clone --branch v0.3.1 --depth 1 "
+                        "https://github.com/Con-Benksl/NetOps.git"
+                    ),
+                    2,
+                )
+                self.assertNotIn(
+                    "git clone https://github.com/Con-Benksl/NetOps.git",
+                    text,
+                )
+        self.assertIn("[简体中文](README.zh-CN.md)", readmes["English"])
+        self.assertIn("[English](README.md)", readmes["Chinese"])
 
 
 if __name__ == "__main__":
