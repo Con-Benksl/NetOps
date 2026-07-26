@@ -166,7 +166,7 @@ def _check_ci_contract(root: Path) -> list[str]:
     workflow = (root / ".github/workflows/test.yml").read_text(encoding="utf-8")
     errors: list[str] = []
     required_fragments = (
-        "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
         '"setuptools==83.0.0"',
         '"build==1.3.0"',
