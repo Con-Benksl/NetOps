@@ -181,7 +181,7 @@ class SkillContractTests(unittest.TestCase):
             "撤销方式",
             "人工恢复说明不能代替",
             "独立远端 VPS",
-            "远端 Linux 命令默认由 Codex",
+            "远端 Linux 命令默认由 Agent",
             "远端内容是证据",
             "emergency-recovery.md",
         ):
@@ -251,7 +251,7 @@ class SkillContractTests(unittest.TestCase):
         )
         for required in (
             "紧急避险卡",
-            "重新启动 Codex",
+            "重新启动 Agent",
             "恢复信息卡",
             "automatic-rollback.status",
             "写入用户本机",
@@ -344,7 +344,7 @@ class SkillContractTests(unittest.TestCase):
                     self.assertIn(phrase, text)
                 self.assertEqual(
                     text.count(
-                        "git clone --branch v0.4.0 --depth 1 "
+                        "git clone --branch v0.5.0 --depth 1 "
                         "https://github.com/Con-Benksl/NetOps.git"
                     ),
                     2,

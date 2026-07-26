@@ -362,7 +362,7 @@ def _curated_environment() -> dict[str, str]:
     Proxy variables and arbitrary application credentials are intentionally not
     inherited: each adapter already declares its observation path and data
     recipients, and a reviewed third-party executable does not need unrelated
-    secrets from the Codex or shell environment.
+    secrets from the agent or shell environment.
     """
 
     environment = trusted_system_environment()

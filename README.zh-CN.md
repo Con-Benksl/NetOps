@@ -4,9 +4,9 @@
 
 VPS 网络出问题时，真正麻烦的往往不是少了一条命令，而是不知道问题出在哪一段：是电脑、家里的网络、VPS、代理配置、上游出口，还是目标网站本身？
 
-NetOps 就是用来查这件事的。它包含一组可供 Codex 使用的 Agent Skills，以及一个只依赖 Python 标准库的诊断工具。你可以直接用中文描述问题，也可以在命令行里运行扫描。
+NetOps 就是用来查这件事的。它包含一组通用的 Agent Skills（Claude Code、Codex 或其他兼容 Agent Skills 的工具都能用，下文统称 Agent），以及一个只依赖 Python 标准库的诊断工具。你可以直接用中文描述问题，也可以在命令行里运行扫描。
 
-它的做事顺序很简单：**先扫描，再判断；先保护 Codex 的联网通道，再改网络。** 对不承载当前 Codex 流量、也不修改本机网络的 VPS，确认影响后由 Codex 直接通过 SSH 完成备份、修改、验证和失败回滚，不要求用户手动复制 Linux 命令。
+它的做事顺序很简单：**先扫描，再判断；先保护 Agent 的联网通道，再改网络。** 对不承载当前 Agent 流量、也不修改本机网络的 VPS，确认影响后由 Agent 直接通过 SSH 完成备份、修改、验证和失败回滚，不要求用户手动复制 Linux 命令。
 
 ## 什么时候适合用
 
@@ -46,17 +46,19 @@ NetOps 会从当前能够访问的观察点收集信息：
 
 ## 最简单的用法
 
-### 方式一：作为 Codex Skill 使用
+### 方式一：作为 Agent Skill 使用
 
-需要 Node.js 22.20.0 或更高版本。从已审查的精确发布标签安装。不要把浮动分支或 `latest` 管道直接交给 shell；下面的 CLI 版本和 NetOps 标签都固定。安装器在 Codex 环境中可能自动进入非交互模式，因此先用只读列表确认恰好发现 `netops` 和五个子 Skill，再单独执行安装：
+需要 Node.js 22.20.0 或更高版本。从已审查的精确发布标签安装。不要把浮动分支或 `latest` 管道直接交给 shell；下面的 CLI 版本和 NetOps 标签都固定。安装器在 Agent 环境中可能自动进入非交互模式，因此先用只读列表确认恰好发现 `netops` 和五个子 Skill，再单独执行安装：
 
 ```bash
-git clone --branch v0.4.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.5.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -l --full-depth
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
 ```
 
-发布者尚未创建 `v0.4.0` 标签时，这条命令应当失败；不要退回 `main` 或自动选择最新提交。
+装给 Claude Code 就把 `--agent codex` 换成 `--agent claude-code`；想一次装给本机全部已识别的 Agent 用 `--agent '*'`。Skill 内容本身与 Agent 无关，同一份规则在哪个 Agent 里都成立。
+
+发布者尚未创建 `v0.5.0` 标签时，这条命令应当失败；不要退回 `main` 或自动选择最新提交。
 
 安装后，直接描述你遇到的情况即可。例如：
 
@@ -82,36 +84,36 @@ NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent
 
 每轮最多出现 3 个问题，每题只有 2 到 3 个选项。推荐项会放在前面，每个选项都会说明接下来做什么、有什么限制。能自动扫描出来的信息不会反过来让你猜；你的目标已经明确时，也不会强制弹出菜单。
 
-如果信息不够，NetOps 会优先建议只读扫描。需要改服务器时，它会先说明准备改什么、不会改什么、预计中断多久、失败有什么影响，以及怎样备份、验证和回滚。独立远端 VPS 可以在确认后由 Codex 直接 SSH 执行；高风险精确文件事务或共享远端路径可以改用不可变计划和自动回滚。两种方式都只问一次 `执行 / 只保留方案 / 取消`，不会把远端命令甩给用户手动完成。
+如果信息不够，NetOps 会优先建议只读扫描。需要改服务器时，它会先说明准备改什么、不会改什么、预计中断多久、失败有什么影响，以及怎样备份、验证和回滚。独立远端 VPS 可以在确认后由 Agent 直接 SSH 执行；高风险精确文件事务或共享远端路径可以改用不可变计划和自动回滚。两种方式都只问一次 `执行 / 只保留方案 / 取消`，不会把远端命令甩给用户手动完成。
 
-## 修网络时，怎样避免 Codex 自己掉线
+## 修网络时，怎样避免 Agent 自己掉线
 
-很多人使用 Codex 时本来就开着代理。如果 Codex 正在经过某个代理应用、TUN、节点或 VPS，而修复操作恰好要重启它，Codex 可能和网络一起断开，后面的验证和回滚也无法继续。
+很多人使用 Agent 时本来就开着代理。如果 Agent 正在经过某个代理应用、TUN、节点或 VPS，而修复操作恰好要重启它，Agent 可能和网络一起断开，后面的验证和回滚也无法继续。
 
 NetOps 会把这件事当作所有流程共同遵守的底层安全门：
 
-1. 先确认 Codex 当前经过哪些代理、TUN、节点和 VPS。
+1. 先确认 Agent 当前经过哪些代理、TUN、节点和 VPS。
 2. 对照本次准备修改的组件，判断两条路径是否重合。
-3. 目标是另一台不承载当前流量的 VPS、且不改变本机网络时，确认后由 Codex 直接 SSH 执行。
+3. 目标是另一台不承载当前流量的 VPS、且不改变本机网络时，确认后由 Agent 直接 SSH 执行。
 4. 目标与当前节点或 VPS 重合时，优先切到真正独立的网络、代理进程或设备。
 5. 共享远端路径在回滚合同完整时可以直接执行；执行器会在首次写入前确认自动回滚 timer 已启动，并在新旧路径验证通过后解除。合同不完整时门禁不会拒绝，而是给出 `warn`：先展示影响、恢复路径、残余风险和更安全的替代方案，用户明确接受本次残余风险后才继续。
-6. 本机 TUN、系统代理、活动代理进程、DNS、路由或防火墙切换等可能让 Codex 当场失联的动作，默认交给用户手动完成；远端 Linux 命令仍由 Codex 执行。用户在看过恢复卡后明确要求 Codex 代劳时，这类动作会一次只做一步。
+6. 本机 TUN、系统代理、活动代理进程、DNS、路由或防火墙切换等可能让 Agent 当场失联的动作，默认交给用户手动完成；远端 Linux 命令仍由 Agent 执行。用户在看过恢复卡后明确要求 Agent 代劳时，这类动作会一次只做一步。
 
 同一个代理软件里的“备用节点”通常不算独立通道，因为重启软件或 TUN 时所有节点会一起中断。手机热点、另一台设备、独立代理进程或提前验证过的服务商控制台更可靠。
 
-如果已经失联，先不要删除配置或反复重装。关闭测试中的 TUN/失效系统代理，切换到已知可用的独立网络，恢复普通 HTTPS 后重新打开 Codex，再把变更摘要或计划 ID、备份位置和最后一步交给它继续处理。完整步骤见 [`references/control-channel-safety.md`](references/control-channel-safety.md)。
+如果已经失联，先不要删除配置或反复重装。关闭测试中的 TUN/失效系统代理，切换到已知可用的独立网络，恢复普通 HTTPS 后重新打开 Agent，再把变更摘要或计划 ID、备份位置和最后一步交给它继续处理。完整步骤见 [`references/control-channel-safety.md`](references/control-channel-safety.md)。
 
 ### 方式二：直接运行命令行工具
 
 需要 Python 3.10 到 3.14：
 
 ```bash
-git clone --branch v0.4.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.5.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 cd NetOps
 python3 scripts/netopsctl.py --help
 ```
 
-这里同样要求 `v0.4.0` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
+这里同样要求 `v0.5.0` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
 
 `0.3.0` 将变更 spec/plan 合同升级为 `schema_version: "3.0"`，并开放受控远程执行：计划、控制通道门禁、精确文件备份、自动回滚和回执保持绑定。`0.2.0` 的 `2.0` 变更计划会被明确拒绝，必须重新审计和生成。fleet 与诊断包公共合同仍为 `2.0`；监控本地配置/所有权清单以及支持包容器各自的内部 `1.0` 格式不受这次变更影响。
 
@@ -121,7 +123,7 @@ python3 scripts/netopsctl.py --help
 python3 scripts/netopsctl.py scan client --output client.json
 ```
 
-在任何网络变更前，可以先做控制通道初步判断。例如，下面表示 Codex 已经通过一条不经过待修改服务的独立管理路径完成实测：
+在任何网络变更前，可以先做控制通道初步判断。例如，下面表示 Agent 已经通过一条不经过待修改服务的独立管理路径完成实测：
 
 ```bash
 python3 scripts/netopsctl.py safety assess \
@@ -148,7 +150,7 @@ netopsctl change apply \
   --receipt change-apply.receipt.json
 ```
 
-`current-control-channel.json` 必须只包含 `observed_at` 和与计划完全一致的 `control_channel`，时间不得早于执行前 15 分钟。通过 Skill 工作时该文件由 Codex 根据刚完成的检查生成，不要求用户手写。缺少 `--authorized`、计划 ID 不匹配、计划超过 24 小时、控制通道证据过期或改变、现场文件变化时，精确计划执行器会在首次远程写入前停止。门禁重新计算为 `warn` 时同样会停止，除非本次执行已经加上 `--accept-residual-risk`；`can_apply_with_acknowledgment` 为 `false`（例如涉及本机控制面）时，加了该参数也不会继续。已确认的风险会写入回执的 `acknowledged_risks`。失败后先看回执；状态为 `rollback-pending` 时等待已武装的自动回滚，不要重复应用；状态为 `consent-required` 时表示门禁给出 `warn` 而本次没有提供知情同意，回滚尚未发生。
+`current-control-channel.json` 必须只包含 `observed_at` 和与计划完全一致的 `control_channel`，时间不得早于执行前 15 分钟。通过 Skill 工作时该文件由 Agent 根据刚完成的检查生成，不要求用户手写。缺少 `--authorized`、计划 ID 不匹配、计划超过 24 小时、控制通道证据过期或改变、现场文件变化时，精确计划执行器会在首次远程写入前停止。门禁重新计算为 `warn` 时同样会停止，除非本次执行已经加上 `--accept-residual-risk`；`can_apply_with_acknowledgment` 为 `false`（例如涉及本机控制面）时，加了该参数也不会继续。已确认的风险会写入回执的 `acknowledged_risks`。失败后先看回执；状态为 `rollback-pending` 时等待已武装的自动回滚，不要重复应用；状态为 `consent-required` 时表示门禁给出 `warn` 而本次没有提供知情同意，回滚尚未发生。
 
 这条命令会生成两个文件：供程序读取的 `client.json`，以及适合直接阅读的 `client.md`。如果还需要确认公网出口，可以主动加上 `--external`：
 
@@ -301,9 +303,9 @@ netopsctl bundle inspect node-support.zip --report-output node-support-review.md
 - 不把“端口能连通”直接解释成 VLESS、Hysteria2 等协议一定正常。
 - 不承诺还原运营商和服务商内部无法观测的完整物理线路。
 - 不会为了修一个节点，默认改变整台 VPS 的出口或覆盖已有配置。
-- 不会未经授权修改远端系统。独立远端 VPS 可由 Codex 直接 SSH 执行；若操作会触碰当前 Codex 路径，则必须先建立独立通道、准备自动回滚保护，或由用户在看过风险卡后明确接受本次残余风险。
+- 不会未经授权修改远端系统。独立远端 VPS 可由 Agent 直接 SSH 执行；若操作会触碰当前 Agent 路径，则必须先建立独立通道、准备自动回滚保护，或由用户在看过风险卡后明确接受本次残余风险。
 - 本版本不会安装、停止或删除本地调度任务；监控 install/remove 只有不可执行的 dry-run 审查材料。
-- 不会在 Codex 控制通道未知，或只准备了同一代理应用内的备用节点时，静默重启活动网络路径。这种情况门禁给出 `warn` 而不是拒绝：先展示影响、恢复路径、残余风险和更安全的替代方案，用户针对这一次操作明确同意后才继续，并把已确认的风险写入回执。
+- 不会在 Agent 控制通道未知，或只准备了同一代理应用内的备用节点时，静默重启活动网络路径。这种情况门禁给出 `warn` 而不是拒绝：先展示影响、恢复路径、残余风险和更安全的替代方案，用户针对这一次操作明确同意后才继续，并把已确认的风险写入回执。
 
 ## 开发与测试
 

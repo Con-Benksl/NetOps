@@ -767,7 +767,7 @@ def scan_client(
             {
                 "severity": "info",
                 "segment": "control-channel",
-                "title": "网络变更前需要确认 Codex 控制通道",
+                "title": "网络变更前需要确认 Agent 控制通道",
                 "evidence": [
                     item.observation_id
                     for item in bundle.observations
@@ -817,7 +817,7 @@ def scan_client(
         },
     ]
     bundle.limitations.append(
-        "扫描能发现代理、系统代理或 TUN 线索，但不能仅凭这些线索证明 Codex 当前经过哪一个节点或 VPS"
+        "扫描能发现代理、系统代理或 TUN 线索，但不能仅凭这些线索证明 Agent 当前经过哪一个节点或 VPS"
     )
     return bundle.finish()
 

@@ -16,6 +16,37 @@ this work is reconciled with the published repository.
 
 Nothing yet.
 
+## [0.5.0] - 2026-07-26
+
+The suite is agent neutral. It was written with Codex as the operator and
+said so 127 times; nothing about the safety model, the gate, or the
+diagnostics was ever Codex specific, so the name was replaced with the role.
+
+### Changed
+
+- **Breaking for in-flight plans.** Every user facing string that named
+  Codex now says "the agent" (English) or "Agent" (Chinese; 代理 was
+  avoided because it means proxy in this domain). This includes the gate's
+  reason and next action strings, which are embedded in reviewed plans, so
+  a plan created before 0.5.0 fails the guard comparison loudly and must be
+  regenerated. That is the same behaviour every prior contract change had.
+- Documentation defines the term at first use: the agent is whichever AI
+  assistant operates for the user, Claude Code, Codex, or another Agent
+  Skills compatible tool. Structured question guidance names both
+  `request_user_input` (Codex) and `AskUserQuestion` (Claude Code).
+- Install documentation covers `--agent claude-code` and `--agent '*'`
+  alongside the existing `--agent codex`, verified against the pinned
+  skills CLI.
+- The per skill `agents/openai.yaml` prompts, which are Codex adapter
+  configuration, now use the neutral wording too, so copying them for
+  another adapter does not smuggle the old name back in.
+
+### Unchanged
+
+- CHANGELOG history keeps the original wording of past releases.
+- The install commands still pin `--agent codex` as one of the examples;
+  Codex remains fully supported, it is just no longer assumed.
+
 ## [0.4.0] - 2026-07-26
 
 A safety and publication release. The gate stops asking the model to tick a
@@ -200,7 +231,8 @@ together.
 - Remote change execution was unreleased in this version. Plans could be
   produced and reviewed, but nothing applied them.
 
-[Unreleased]: https://github.com/Con-Benksl/NetOps/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Con-Benksl/NetOps/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Con-Benksl/NetOps/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Con-Benksl/NetOps/compare/v0.3.1...v0.4.0
 [0.3.2]: https://github.com/Con-Benksl/NetOps/pull/2
 [0.3.1]: https://github.com/Con-Benksl/NetOps/releases/tag/v0.3.1

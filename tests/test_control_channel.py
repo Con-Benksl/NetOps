@@ -103,7 +103,7 @@ class ControlChannelTests(unittest.TestCase):
         self.assertTrue(allowed["execution_available"])
         self.assertEqual(allowed["risk"], "guarded")
         self.assertEqual(allowed["execution_mode"], "direct-ssh-or-plan")
-        self.assertIn("Codex 执行", allowed["next_action"])
+        self.assertIn("Agent 执行", allowed["next_action"])
         self.assertIn("明确授权", allowed["next_action"])
         self.assertIn("计划 ID", allowed["next_action"])
 
@@ -123,7 +123,7 @@ class ControlChannelTests(unittest.TestCase):
         self.assertTrue(result["can_apply"])
         self.assertEqual(result["decision"], "allow")
         self.assertEqual(result["execution_mode"], "direct-ssh-or-plan")
-        self.assertIn("不在当前 Codex 路径上", result["reasons"][-1])
+        self.assertIn("不在当前 Agent 路径上", result["reasons"][-1])
 
     def test_target_independence_does_not_substitute_for_a_backup_channel(self):
         control = {
@@ -274,7 +274,7 @@ class ControlChannelTests(unittest.TestCase):
         )
         self.assertFalse(result["can_apply"])
         self.assertEqual(result["execution_mode"], "manual-local-control-plane")
-        self.assertIn("远端 Linux 命令继续由 Codex 执行", result["next_action"])
+        self.assertIn("远端 Linux 命令继续由 Agent 执行", result["next_action"])
 
     def test_transient_timer_cannot_guard_a_host_reboot(self):
         control = {
@@ -296,7 +296,7 @@ class ControlChannelTests(unittest.TestCase):
         steps = emergency_steps("windows")
         self.assertTrue(any("网络和 Internet" in item for item in steps))
         self.assertTrue(any("手机热点" in item for item in steps))
-        self.assertTrue(any("重新启动 Codex" in item for item in steps))
+        self.assertTrue(any("重新启动 Agent" in item for item in steps))
 
     def test_rejects_unknown_surface_and_unsafe_delay(self):
         with self.assertRaisesRegex(ValueError, "unsupported"):

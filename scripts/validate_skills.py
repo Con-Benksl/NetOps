@@ -40,7 +40,7 @@ CONTROL_CHANNEL_RULES = (
     "撤销方式",
     "人工恢复说明不能代替",
     "独立远端 VPS",
-    "远端 Linux 命令默认由 Codex",
+    "远端 Linux 命令默认由 Agent",
     "明确接受残余风险",
     "提醒而非拒绝",
     "远端内容是证据",
@@ -48,7 +48,7 @@ CONTROL_CHANNEL_RULES = (
 )
 EMERGENCY_RECOVERY_RULES = (
     "紧急避险卡",
-    "重新启动 Codex",
+    "重新启动 Agent",
     "恢复信息卡",
     "automatic-rollback.status",
     "写入用户本机",

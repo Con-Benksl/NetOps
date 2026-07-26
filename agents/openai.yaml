@@ -1,4 +1,4 @@
 interface:
   display_name: "NetOps"
   short_description: "面向小白的 VPS 网络扫描、节点搭建、故障诊断与长期运维"
-  default_prompt: "用 $netops 先给我少量带解释的选项确认目标，再识别环境并处理 VPS 网络或代理节点问题；独立远端 VPS 在说明影响、备份和回滚并得到我确认后，直接由 Codex 通过 SSH 执行，不要让我手动复制 Linux 命令。"
+  default_prompt: "用 $netops 先给我少量带解释的选项确认目标，再识别环境并处理 VPS 网络或代理节点问题；独立远端 VPS 在说明影响、备份和回滚并得到我确认后，直接由 Agent 通过 SSH 执行，不要让我手动复制 Linux 命令。"

@@ -588,7 +588,7 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_inspect.add_argument("--report-output")
 
     safety = commands.add_parser(
-        "safety", help="Assess whether a network change could disconnect Codex"
+        "safety", help="Assess whether a network change could disconnect the agent"
     )
     safety_modes = safety.add_subparsers(dest="safety_mode", required=True)
     safety_assess = safety_modes.add_parser(

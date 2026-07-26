@@ -23,7 +23,7 @@ This Skill is strictly read-only. Authorized SSH here is for scanning only; hand
 - `compare`: compare two versioned bundles only when targets, protocol, and time window are compatible.
 - `monitor evidence`: inspect existing bounded samples and incident bundles. Read `<reference-root>/monitoring.md` before interpreting existing samples, so you know what a sample does and does not retain and what its privacy boundary is. Installing, changing, or removing a scheduled monitor belongs to `netops-manage`.
 - `curated tools`: attach one maintained specialist tool to a client, local-server, or node scan when built-in probes cannot answer the next question.
-- `control channel`: record proxy environment, system-proxy/TUN clues, the proposed change surface, and whether Codex dependency is confirmed, unknown, or independent.
+- `control channel`: record proxy environment, system-proxy/TUN clues, the proposed change surface, and whether the agent's dependency is confirmed, unknown, or independent.
 
 These are modes of one Skill, not separate Skills.
 
@@ -56,7 +56,7 @@ Read `<reference-root>/curated-tools.md` before recommending an external tool. D
 7. External adapters execute at the current observation point. To inspect VPS egress, run the local-server scan on that VPS; do not pretend a client-side run observed the VPS.
 8. For CLI remote SSH scanning, require `--authorized`, `--fleet`, and `--host`. Put explicit host metadata only in a temporary private fleet JSON that follows the schema; never pass a password on the command line or echo credential references.
 9. Render the JSON bundle as a beginner report and list missing observation points.
-10. Before handing evidence to a mutating workflow, apply `<reference-root>/control-channel-safety.md`. Treat detected proxies and TUN interfaces as clues; require user confirmation or a controlled test before declaring the Codex path independent.
+10. Before handing evidence to a mutating workflow, apply `<reference-root>/control-channel-safety.md`. Treat detected proxies and TUN interfaces as clues; require user confirmation or a controlled test before declaring the agent's path independent.
 
 Read `<reference-root>/observable-path.md` before interpreting a path. Follow `<reference-root>/beginner-reporting.md` for the answer.
 
