@@ -80,6 +80,7 @@ def safe_control_channel():
             "dependency": "independent",
             "change_surfaces": ["remote-proxy-service"],
             "continuity_strategy": "independent-path",
+            "target_independence_verified": True,
             "independent_path_verified": True,
             "operator_recovery_reviewed": True,
             "host_reboot_planned": False,
@@ -550,8 +551,13 @@ class FleetAndChangeTests(unittest.TestCase):
             spec_path.write_text(json.dumps(spec), encoding="utf-8")
             plan_path = root / "plan.json"
             plan = create_plan(spec_path, fleet_data(), plan_path)
-            self.assertEqual(plan["control_channel_guard"]["decision"], "block")
-            with self.assertRaisesRegex(PermissionError, "control-channel guard"):
+            self.assertEqual(plan["control_channel_guard"]["decision"], "warn")
+            self.assertTrue(
+                plan["control_channel_guard"]["acknowledgment_required"]
+            )
+            with self.assertRaisesRegex(
+                PermissionError, "requires informed consent"
+            ):
                 apply_plan(
                     plan_path,
                     fleet_data(),
@@ -561,6 +567,31 @@ class FleetAndChangeTests(unittest.TestCase):
                         plan["control_channel"]
                     ),
                 )
+            with patch(
+                "netops_core.change._remote_script",
+                side_effect=RuntimeError("remote reached"),
+            ) as remote:
+                with self.assertRaisesRegex(RuntimeError, "remote reached"):
+                    apply_plan(
+                        plan_path,
+                        fleet_data(),
+                        authorized=True,
+                        confirmed_plan_id=plan["plan_id"],
+                        current_control_channel=fresh_rollback_access_evidence(
+                            plan["control_channel"]
+                        ),
+                        receipt_path=root / "consent-apply-receipt.json",
+                        accept_residual_risk=True,
+                    )
+            self.assertGreaterEqual(remote.call_count, 1)
+            consent_receipt = json.loads(
+                (root / "consent-apply-receipt.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(consent_receipt["residual_risk_acknowledged"])
+            self.assertEqual(
+                consent_receipt["acknowledged_risks"],
+                plan["control_channel_guard"]["reasons"],
+            )
 
     def test_change_apply_requires_fresh_matching_control_channel_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1529,6 +1560,7 @@ class FleetAndChangeTests(unittest.TestCase):
                 "dependency": "unknown",
                 "change_surfaces": ["remote-proxy-service"],
                 "continuity_strategy": "manual-recovery",
+                "target_independence_verified": False,
                 "independent_path_verified": False,
                 "operator_recovery_reviewed": True,
                 "host_reboot_planned": False,
@@ -1540,16 +1572,19 @@ class FleetAndChangeTests(unittest.TestCase):
             plan = create_plan(spec_path, fleet_data(), plan_path)
             receipt_path = root / "rollback-receipt.json"
             rollback_execution = "d" * 12
-            with self.assertRaisesRegex(PermissionError, "blocked rollback"):
+            apply_receipt_path = write_apply_receipt(
+                root, plan, rollback_execution
+            )
+            with self.assertRaisesRegex(
+                PermissionError, "requires informed consent"
+            ):
                 rollback_plan(
                     plan_path,
                     fleet_data(),
                     backup_dir=f"/var/backups/netops/{plan['plan_id']}/{rollback_execution}",
                     authorized=True,
                     confirmed_plan_id=plan["plan_id"],
-                    apply_receipt_path=write_apply_receipt(
-                        root, plan, rollback_execution
-                    ),
+                    apply_receipt_path=apply_receipt_path,
                     current_control_channel={
                         "observed_at": fresh_rollback_access_evidence()["observed_at"],
                         "control_channel": spec["control_channel"],
@@ -1557,8 +1592,40 @@ class FleetAndChangeTests(unittest.TestCase):
                     receipt_path=receipt_path,
                 )
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-            self.assertEqual(receipt["status"], "blocked")
-            self.assertEqual(receipt["control_channel_guard"]["decision"], "block")
+            self.assertEqual(receipt["status"], "consent-required")
+            self.assertEqual(receipt["control_channel_guard"]["decision"], "warn")
+
+            success = {
+                "returncode": 0,
+                "stdout": BACKUP_INTEGRITY_STDOUT,
+                "stderr": "",
+                "duration_ms": 1,
+            }
+            consent_receipt_path = root / "consent-rollback-receipt.json"
+            with patch(
+                "netops_core.change._remote_script", return_value=success
+            ) as remote:
+                consent_receipt = rollback_plan(
+                    plan_path,
+                    fleet_data(),
+                    backup_dir=f"/var/backups/netops/{plan['plan_id']}/{rollback_execution}",
+                    authorized=True,
+                    confirmed_plan_id=plan["plan_id"],
+                    apply_receipt_path=apply_receipt_path,
+                    current_control_channel={
+                        "observed_at": fresh_rollback_access_evidence()["observed_at"],
+                        "control_channel": spec["control_channel"],
+                    },
+                    receipt_path=consent_receipt_path,
+                    accept_residual_risk=True,
+                )
+            self.assertEqual(consent_receipt["status"], "rolled-back")
+            self.assertGreaterEqual(remote.call_count, 1)
+            self.assertTrue(consent_receipt["residual_risk_acknowledged"])
+            self.assertEqual(
+                consent_receipt["acknowledged_risks"],
+                consent_receipt["control_channel_guard"]["reasons"],
+            )
 
     def test_manual_rollback_remote_failure_is_receipted_and_redacted(self):
         with tempfile.TemporaryDirectory() as temporary:

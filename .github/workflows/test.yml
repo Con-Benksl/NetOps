@@ -61,6 +61,8 @@ jobs:
         run: python scripts/validate_skills.py .
       - name: Secret scan
         run: python scripts/check_secrets.py .
+      - name: Install tree
+        run: python scripts/check_install_tree.py .
       - name: Release integrity
         run: python scripts/release_check.py . --require-jsonschema
       - name: Build and verify reproducible release artifacts

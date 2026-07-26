@@ -34,10 +34,16 @@ LOCAL_CHANGE_SURFACES = {
     "local-routes",
     "local-firewall",
 }
+# target_independence_verified records that the change target is not on the
+# agent's current network path. independent_path_verified records that a
+# separate management channel was actually tested and stays reachable while the
+# shared path is disrupted. They are different facts and neither implies the
+# other, so they are never folded into one flag.
 CONTROL_CHANNEL_KEYS = {
     "dependency",
     "change_surfaces",
     "continuity_strategy",
+    "target_independence_verified",
     "independent_path_verified",
     "operator_recovery_reviewed",
     "host_reboot_planned",
@@ -118,6 +124,7 @@ def normalize_control_channel(raw: Any) -> dict[str, Any]:
         if surface not in normalized_surfaces:
             normalized_surfaces.append(surface)
     for key in (
+        "target_independence_verified",
         "independent_path_verified",
         "operator_recovery_reviewed",
         "host_reboot_planned",
@@ -154,6 +161,9 @@ def normalize_control_channel(raw: Any) -> dict[str, Any]:
         "dependency": dependency,
         "change_surfaces": normalized_surfaces,
         "continuity_strategy": strategy,
+        "target_independence_verified": raw.get(
+            "target_independence_verified", False
+        ),
         "independent_path_verified": raw.get("independent_path_verified", False),
         "operator_recovery_reviewed": raw.get("operator_recovery_reviewed", False),
         "host_reboot_planned": raw.get("host_reboot_planned", False),
@@ -338,7 +348,7 @@ def assess_control_channel(
     contract = _normalize_rollback_contract(rollback_contract)
     reasons: list[str] = []
     can_apply = False
-    risk = "blocked"
+    risk = "unresolved"
     execution_mode = "read-only"
     local_surfaces = sorted(set(control["change_surfaces"]) & LOCAL_CHANGE_SURFACES)
 
@@ -358,21 +368,28 @@ def assess_control_channel(
         reasons.append("用户尚未看过并确认人工恢复与紧急避险步骤。")
     elif require_independent_path and control["dependency"] != "independent":
         reasons.append(
-            "手动远端回滚不能依赖正在恢复的共享路径；请使用已验证独立通道或等待已武装的自动回滚。"
+            "手动远端回滚不能依赖正在恢复的共享路径；"
+            "请先用 target_independence_verified 证明目标不在当前 Codex 路径上，"
+            "或等待已武装的自动回滚完成。"
         )
     elif control["dependency"] == "independent":
-        if (
-            control["continuity_strategy"] == "independent-path"
-            and control["independent_path_verified"]
-        ):
+        if not control["target_independence_verified"]:
+            reasons.append(
+                "尚未提供目标不在当前 Codex 路径上的实测证据；"
+                "target_independence_verified 仍为 false。"
+            )
+        elif control["continuity_strategy"] != "independent-path":
+            reasons.append(
+                "目标独立性已验证，但 continuity_strategy 不是 independent-path；"
+                "请按实际处置方式重新声明连续性策略。"
+            )
+        else:
             can_apply = True
             risk = "guarded"
             execution_mode = "direct-ssh-or-plan"
             reasons.append(
                 "已验证目标不在当前 Codex 路径上；可直接 SSH 或使用精确计划执行器。"
             )
-        else:
-            reasons.append("独立通道尚未通过实际连通性验证。")
     elif control["continuity_strategy"] == "automatic-rollback":
         if control["host_reboot_planned"]:
             reasons.append("一次性 transient timer 不能保护会重启目标主机的变更。")
@@ -419,7 +436,19 @@ def assess_control_channel(
                 "并在新旧路径验证通过后解除。"
             )
     elif control["continuity_strategy"] == "independent-path":
-        reasons.append("请先切换并验证独立通道，再把依赖状态标记为 independent。")
+        if control["independent_path_verified"]:
+            can_apply = True
+            risk = "guarded"
+            execution_mode = "direct-ssh-or-plan"
+            reasons.append(
+                "共享路径已具备实测通过的独立备用管理通道；"
+                "可直接 SSH 或使用精确计划执行器。"
+            )
+        else:
+            reasons.append(
+                "独立备用管理通道尚未通过实际连通性验证；"
+                "independent_path_verified 仍为 false。"
+            )
     else:
         reasons.append(
             "仅靠人工恢复不能保证 Codex 断线后继续；请改用已验证独立通道，"
@@ -443,17 +472,25 @@ def assess_control_channel(
         )
     elif control["dependency"] == "shared":
         next_action = (
-            "优先切换到独立网络或独立代理进程，并补充回滚审核材料；"
-            "在控制通道门禁允许前不要执行。"
+            "推荐先切换到独立网络或独立代理进程，或补齐自动回滚审核材料；"
+            "用户在看过风险卡（影响、恢复路径、残余风险）后明确接受残余风险时，"
+            "也可以继续执行，并在回执中记录已确认的风险。"
         )
     else:
         next_action = (
             "先扫描或由用户确认 Codex 当前经过的代理、TUN、节点和 VPS；"
-            "控制通道未知时停止在计划阶段。"
+            "控制通道未知时默认停在计划阶段。用户明确接受未知风险时，"
+            "按共享路径的最高风险对待并展示恢复路径后继续。"
         )
+    acknowledgment_required = not can_apply
+    can_apply_with_acknowledgment = (
+        not can_apply and execution_mode != "manual-local-control-plane"
+    )
     return {
-        "decision": "allow" if can_apply else "block",
+        "decision": "allow" if can_apply else "warn",
         "can_apply": can_apply,
+        "acknowledgment_required": acknowledgment_required,
+        "can_apply_with_acknowledgment": can_apply_with_acknowledgment,
         "execution_available": True,
         "execution_mode": execution_mode,
         "risk": risk,

@@ -213,6 +213,7 @@
         "dependency",
         "change_surfaces",
         "continuity_strategy",
+        "target_independence_verified",
         "independent_path_verified",
         "operator_recovery_reviewed",
         "host_reboot_planned",
@@ -243,7 +244,14 @@
         "continuity_strategy": {
           "enum": ["independent-path", "automatic-rollback", "manual-recovery"]
         },
-        "independent_path_verified": {"type": "boolean"},
+        "target_independence_verified": {
+          "description": "True only when the change target was verified to be off the agent's current network path.",
+          "type": "boolean"
+        },
+        "independent_path_verified": {
+          "description": "True only when a separate management channel was actually tested and survives disruption of the shared path.",
+          "type": "boolean"
+        },
         "operator_recovery_reviewed": {"type": "boolean"},
         "host_reboot_planned": {"type": "boolean"},
         "evidence": {
@@ -364,6 +372,8 @@
       "required": [
         "decision",
         "can_apply",
+        "acknowledgment_required",
+        "can_apply_with_acknowledgment",
         "execution_available",
         "execution_mode",
         "risk",
@@ -372,8 +382,10 @@
         "emergency_steps"
       ],
       "properties": {
-        "decision": {"enum": ["allow", "block"]},
+        "decision": {"enum": ["allow", "warn"]},
         "can_apply": {"type": "boolean"},
+        "acknowledgment_required": {"type": "boolean"},
+        "can_apply_with_acknowledgment": {"type": "boolean"},
         "execution_available": {"const": true},
         "execution_mode": {
           "enum": [
@@ -383,7 +395,7 @@
             "read-only"
           ]
         },
-        "risk": {"enum": ["blocked", "guarded", "guarded-high"]},
+        "risk": {"enum": ["unresolved", "guarded", "guarded-high"]},
         "reasons": {
           "type": "array",
           "minItems": 1,

@@ -1,6 +1,6 @@
 ---
 name: "netops-manage"
-description: "Long-term VPS network and proxy operations: scheduled monitoring, baselines, incident bundles, backups, upgrades, compatibility checks, security, capacity, multi-VPS standards and drift, user lifecycle, subscriptions, and read-only traffic portals. Offer explained management-goal and monitoring-location choices when the scope is broad. Use for reliability and ongoing fleet management rather than a one-time repair."
+description: "Long-term VPS network and proxy operations: scheduled monitoring, baselines, incident bundles, backups, upgrades, compatibility checks, security, capacity, multi-VPS standards and drift, user lifecycle, subscriptions, and read-only traffic portals. Use for reliability and ongoing fleet management rather than a one-time repair. 典型中文请求：几台 VPS 统一标准、定期备份和升级、加或删用户和限流、订阅链接管理、长期监控方案。"
 ---
 
 # NetOps Manage

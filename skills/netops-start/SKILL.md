@@ -1,6 +1,6 @@
 ---
 name: "netops-start"
-description: "Beginner onboarding for VPS networking and proxy operations. Use when the user has a new VPS, does not know where to start, or needs plain-language explanations of domains, ports, DNS, inbound/outbound, proxies, dual stack, routes, and basic connection safety. Offer a few explained goal and learning-depth choices when needed. This workflow teaches and routes; it delegates all measurements to netops-scan."
+description: "Beginner onboarding for VPS networking and proxy operations. Use when the user has a new VPS, does not know where to start, or needs plain-language explanations of domains, ports, DNS, inbound/outbound, proxies, dual stack, routes, node protocols, and basic connection safety. This workflow teaches and routes; it delegates all measurements to netops-scan. 典型中文请求：第一次买 VPS 不知道从哪开始、这些术语是什么意思、自建和机场有什么区别、我该选哪种协议。"
 ---
 
 # NetOps Start

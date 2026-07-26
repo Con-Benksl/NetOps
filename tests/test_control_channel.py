@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from netops_core.control_channel import (
+    CONTROL_CHANNEL_KEYS,
     assess_control_channel,
     emergency_steps,
     normalize_control_channel,
@@ -36,13 +37,30 @@ class ControlChannelTests(unittest.TestCase):
         contract.update(overrides)
         return contract
 
-    def test_unknown_dependency_blocks_apply(self):
+    def test_unknown_dependency_warns_and_requires_consent(self):
         control = normalize_control_channel(None)
         timer = normalize_rollback_timer(None)
         result = assess_control_channel(control, timer)
         self.assertFalse(result["can_apply"])
-        self.assertEqual(result["decision"], "block")
+        self.assertEqual(result["decision"], "warn")
+        self.assertTrue(result["acknowledgment_required"])
+        self.assertTrue(result["can_apply_with_acknowledgment"])
         self.assertIn("尚未明确", result["reasons"][0])
+
+    def test_local_surfaces_cannot_be_acknowledged_into_remote_execution(self):
+        control = normalize_control_channel(
+            {
+                "dependency": "shared",
+                "change_surfaces": ["local-tun"],
+                "continuity_strategy": "manual-recovery",
+            }
+        )
+        timer = normalize_rollback_timer(None)
+        result = assess_control_channel(control, timer)
+        self.assertEqual(result["decision"], "warn")
+        self.assertEqual(result["execution_mode"], "manual-local-control-plane")
+        self.assertTrue(result["acknowledgment_required"])
+        self.assertFalse(result["can_apply_with_acknowledgment"])
 
     def test_safety_objects_reject_unknown_fields_instead_of_defaulting_typos(self):
         with self.assertRaisesRegex(ValueError, "unsupported fields"):
@@ -68,14 +86,14 @@ class ControlChannelTests(unittest.TestCase):
                 rollback_contract=contract,
             )
 
-    def test_independent_path_requires_verification_and_recovery_review(self):
+    def test_independent_target_requires_verification_and_recovery_review(self):
         base = {
             "dependency": "independent",
             "change_surfaces": ["remote-proxy-service"],
             "continuity_strategy": "independent-path",
-            "independent_path_verified": True,
+            "target_independence_verified": True,
             "operator_recovery_reviewed": False,
-            "evidence": ["alternate path tested"],
+            "evidence": ["target confirmed off the current path"],
         }
         blocked = assess_control_channel(base, {"enabled": False, "delay_seconds": 600})
         self.assertFalse(blocked["can_apply"])
@@ -88,6 +106,102 @@ class ControlChannelTests(unittest.TestCase):
         self.assertIn("Codex 执行", allowed["next_action"])
         self.assertIn("明确授权", allowed["next_action"])
         self.assertIn("计划 ID", allowed["next_action"])
+
+    def test_unrelated_target_allows_without_a_backup_channel_flag(self):
+        control = {
+            "dependency": "independent",
+            "change_surfaces": ["remote-proxy-service"],
+            "continuity_strategy": "independent-path",
+            "target_independence_verified": True,
+            "independent_path_verified": False,
+            "operator_recovery_reviewed": True,
+            "evidence": ["the current path does not traverse this VPS"],
+        }
+        result = assess_control_channel(
+            control, {"enabled": False, "delay_seconds": 600}
+        )
+        self.assertTrue(result["can_apply"])
+        self.assertEqual(result["decision"], "allow")
+        self.assertEqual(result["execution_mode"], "direct-ssh-or-plan")
+        self.assertIn("不在当前 Codex 路径上", result["reasons"][-1])
+
+    def test_target_independence_does_not_substitute_for_a_backup_channel(self):
+        control = {
+            "dependency": "shared",
+            "change_surfaces": ["remote-proxy-service"],
+            "continuity_strategy": "independent-path",
+            "target_independence_verified": True,
+            "independent_path_verified": False,
+            "operator_recovery_reviewed": True,
+            "evidence": ["the current path traverses this service"],
+        }
+        blocked = assess_control_channel(
+            control, {"enabled": False, "delay_seconds": 600}
+        )
+        self.assertFalse(blocked["can_apply"])
+        self.assertEqual(blocked["decision"], "warn")
+        self.assertIn("independent_path_verified", blocked["reasons"][0])
+        self.assertNotIn("target_independence_verified", blocked["reasons"][0])
+
+        control["independent_path_verified"] = True
+        allowed = assess_control_channel(
+            control, {"enabled": False, "delay_seconds": 600}
+        )
+        self.assertTrue(allowed["can_apply"])
+        self.assertEqual(allowed["execution_mode"], "direct-ssh-or-plan")
+        self.assertIn("独立备用管理通道", allowed["reasons"][-1])
+
+    def test_backup_channel_does_not_substitute_for_target_independence(self):
+        control = {
+            "dependency": "independent",
+            "change_surfaces": ["remote-proxy-service"],
+            "continuity_strategy": "independent-path",
+            "target_independence_verified": False,
+            "independent_path_verified": True,
+            "operator_recovery_reviewed": True,
+            "evidence": ["backup management channel tested"],
+        }
+        result = assess_control_channel(
+            control, {"enabled": False, "delay_seconds": 600}
+        )
+        self.assertFalse(result["can_apply"])
+        self.assertEqual(result["decision"], "warn")
+        self.assertIn("target_independence_verified", result["reasons"][0])
+
+    def test_independent_target_still_needs_a_declared_continuity_strategy(self):
+        control = {
+            "dependency": "independent",
+            "change_surfaces": ["remote-proxy-service"],
+            "continuity_strategy": "manual-recovery",
+            "target_independence_verified": True,
+            "operator_recovery_reviewed": True,
+            "evidence": ["the current path does not traverse this VPS"],
+        }
+        result = assess_control_channel(
+            control, {"enabled": False, "delay_seconds": 600}
+        )
+        self.assertFalse(result["can_apply"])
+        self.assertIn("continuity_strategy", result["reasons"][0])
+
+    def test_stale_specs_lose_the_allow_instead_of_inheriting_the_old_flag(self):
+        stale = normalize_control_channel(
+            {
+                "dependency": "independent",
+                "change_surfaces": ["remote-proxy-service"],
+                "continuity_strategy": "independent-path",
+                "independent_path_verified": True,
+                "operator_recovery_reviewed": True,
+                "evidence": ["alternate path tested"],
+            }
+        )
+        self.assertFalse(stale["target_independence_verified"])
+        self.assertTrue(stale["independent_path_verified"])
+        result = assess_control_channel(
+            stale, {"enabled": False, "delay_seconds": 600}
+        )
+        self.assertFalse(result["can_apply"])
+        with self.assertRaisesRegex(ValueError, "target_independence_verified"):
+            normalize_control_channel({"target_independence_verified": "yes"})
 
     def test_shared_path_needs_rollback(self):
         control = {
@@ -145,11 +259,12 @@ class ControlChannelTests(unittest.TestCase):
         self.assertEqual(result["execution_mode"], "manual-local-control-plane")
         self.assertIn("用户手动完成", result["reasons"][0])
 
-    def test_verified_independent_path_does_not_automate_local_control_plane(self):
+    def test_verified_independent_target_does_not_automate_local_control_plane(self):
         control = {
             "dependency": "independent",
             "change_surfaces": ["local-tun"],
             "continuity_strategy": "independent-path",
+            "target_independence_verified": True,
             "independent_path_verified": True,
             "operator_recovery_reviewed": True,
             "evidence": ["alternate management path verified"],
@@ -196,7 +311,7 @@ class ControlChannelTests(unittest.TestCase):
             "dependency": "independent",
             "change_surfaces": ["remote-proxy-service"],
             "continuity_strategy": "independent-path",
-            "independent_path_verified": True,
+            "target_independence_verified": True,
             "operator_recovery_reviewed": True,
             "evidence": [],
         }
@@ -329,6 +444,30 @@ class ControlChannelTests(unittest.TestCase):
                         {"enabled": True, "delay_seconds": 600},
                         rollback_contract=contract,
                     )
+
+    def test_schemas_and_example_carry_both_independence_flags(self):
+        root = Path(__file__).resolve().parents[1]
+        for name in ("change-spec", "change-plan"):
+            with self.subTest(schema=name):
+                schema = json.loads(
+                    (root / f"schemas/{name}.schema.json").read_text(encoding="utf-8")
+                )
+                control = schema["properties"]["control_channel"]
+                self.assertEqual(set(control["properties"]), CONTROL_CHANNEL_KEYS)
+                self.assertIn("target_independence_verified", control["required"])
+                self.assertIn("independent_path_verified", control["required"])
+
+        example = json.loads(
+            (root / "examples/change-spec.example.json").read_text(encoding="utf-8")
+        )
+        control_channel = normalize_control_channel(example["control_channel"])
+        self.assertTrue(control_channel["target_independence_verified"])
+        self.assertFalse(control_channel["independent_path_verified"])
+        guard = assess_control_channel(
+            control_channel, normalize_rollback_timer(example["rollback_timer"])
+        )
+        self.assertTrue(guard["can_apply"])
+        self.assertEqual(guard["execution_mode"], "direct-ssh-or-plan")
 
     def test_change_schema_patterns_mirror_review_and_remote_path_guards(self):
         root = Path(__file__).resolve().parents[1]

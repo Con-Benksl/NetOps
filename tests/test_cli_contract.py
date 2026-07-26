@@ -463,6 +463,7 @@ class CliContractTests(unittest.TestCase):
             confirmed_plan_id="a" * 32,
             current_control_channel={"observed_at": "now"},
             receipt_path="apply.receipt.json",
+            accept_residual_risk=False,
         )
 
     @patch("netops_core.cli._json")
@@ -505,6 +506,7 @@ class CliContractTests(unittest.TestCase):
             apply_receipt_path="apply.receipt.json",
             current_control_channel={"observed_at": "now"},
             receipt_path="rollback.receipt.json",
+            accept_residual_risk=False,
         )
 
     def test_installed_entry_point_is_resolved_independently_of_cwd(self):

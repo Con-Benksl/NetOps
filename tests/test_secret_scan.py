@@ -5,7 +5,7 @@ from io import StringIO
 from pathlib import Path
 
 from scripts import check_secrets
-from netops_core.redaction import CREDENTIAL_URI_SCHEMES
+from netops_core.redaction import CREDENTIAL_URI_SCHEMES, UUID_RE
 
 
 class SecretScanTests(unittest.TestCase):
@@ -14,6 +14,14 @@ class SecretScanTests(unittest.TestCase):
             set(check_secrets.NODE_LINK_SCHEMES),
             set(CREDENTIAL_URI_SCHEMES),
         )
+
+    def test_secret_scanner_and_runtime_redactor_share_the_uuid_pattern(self):
+        self.assertEqual(check_secrets.UUID_RE.pattern, UUID_RE.pattern)
+
+    def _client_uuid(self) -> str:
+        """Build a credential shaped uuid4 without storing one in this file."""
+
+        return "d3c7f1a9-" + "4b2e-" + "4c88-" + "9f10-" + "6a5e2b7c41d9"
 
     def _scan_text(self, value: str) -> tuple[int, str, str]:
         with tempfile.TemporaryDirectory() as temporary:
@@ -90,6 +98,86 @@ class SecretScanTests(unittest.TestCase):
                 self.assertEqual(result, 1)
                 self.assertEqual(stdout, "")
                 self.assertIn(expected, stderr)
+
+
+    def test_bare_client_uuid_in_a_node_config_fragment_is_rejected(self):
+        client_uuid = self._client_uuid()
+        fragments = {
+            "markdown": (
+                "节点配置片段：\n\n```json\n"
+                '{"id": "' + client_uuid + '", "flow": "xtls-rprx-vision"}\n'
+                "```\n"
+            ),
+            "json": '{"clients": [{"id": "' + client_uuid + '"}]}',
+            "yaml": "clients:\n  - id: " + client_uuid + "\n",
+            "bare": client_uuid,
+        }
+        for name, fragment in fragments.items():
+            with self.subTest(name=name):
+                result, stdout, stderr = self._scan_text(fragment)
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn("credential-uuid", stderr)
+
+    def test_diagnostic_foreign_key_uuids_are_not_flagged(self):
+        client_uuid = self._client_uuid()
+        for name, fragment in (
+            ("json run id", '{"run_id": "' + client_uuid + '"}'),
+            ("json observation id", '{"observation_id": "' + client_uuid + '"}'),
+            (
+                "evidence reference list",
+                '{"evidence": ["' + client_uuid + '", "' + client_uuid + '"]}',
+            ),
+            (
+                "multiline evidence reference list",
+                '{"evidence": [\n  "' + client_uuid + '",\n  "'
+                + client_uuid
+                + '"\n]}',
+            ),
+            ("python fixture", 'root_run_id = "' + client_uuid + '"'),
+            ("yaml run id", "run_id: " + client_uuid),
+        ):
+            with self.subTest(name=name):
+                result, stdout, stderr = self._scan_text(fragment)
+                self.assertEqual(result, 0, stderr)
+                self.assertIn("secret scan: clean", stdout)
+                self.assertEqual(stderr, "")
+
+    def test_evidence_allowlist_requires_a_reference_list(self):
+        client_uuid = self._client_uuid()
+        for name, fragment in (
+            ("json scalar", '{"evidence": "' + client_uuid + '"}'),
+            ("python scalar", 'evidence = "' + client_uuid + '"'),
+            ("yaml scalar", "evidence: " + client_uuid),
+        ):
+            with self.subTest(name=name):
+                result, stdout, stderr = self._scan_text(fragment)
+                self.assertEqual(result, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn("credential-uuid", stderr)
+
+    def test_documentation_placeholder_uuids_are_not_flagged(self):
+        for name, value in (
+            ("nil", "00000000-0000-0000-0000-000000000000"),
+            ("rfc example", "123e4567-e89b-12d3-a456-426614174000"),
+            ("fleet fixture", "123e4567-e89b-42d3-a456-426614174000"),
+            ("hand numbered run id", "10000000-0000-7000-8000-000000000001"),
+            ("hand numbered observation id", "20000000-0000-8000-8000-000000000002"),
+        ):
+            with self.subTest(name=name):
+                result, stdout, stderr = self._scan_text('{"id": "' + value + '"}')
+                self.assertEqual(result, 0, stderr)
+                self.assertIn("secret scan: clean", stdout)
+                self.assertEqual(stderr, "")
+
+    def test_shipped_examples_scan_clean(self):
+        examples = Path(__file__).resolve().parents[1] / "examples"
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            result = check_secrets.main([str(examples)])
+        self.assertEqual(result, 0, stderr.getvalue())
+        self.assertIn("secret scan: clean", stdout.getvalue())
 
 
 if __name__ == "__main__":

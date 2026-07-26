@@ -31,7 +31,6 @@ EXPECTED_CI_MATRIX = (
 )
 REQUIRED_MANIFEST_LINES = (
     "include README.md",
-    "include README.zh-CN.md",
     "include LICENSE",
     "include SKILL.md",
     "include pyproject.toml",
