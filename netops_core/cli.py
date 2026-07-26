@@ -609,7 +609,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=CONTINUITY_STRATEGIES,
         default="manual-recovery",
     )
-    safety_assess.add_argument("--independent-path-verified", action="store_true")
+    safety_assess.add_argument(
+        "--target-independence-verified",
+        action="store_true",
+        help="The change target was verified to be off the current agent path",
+    )
+    safety_assess.add_argument(
+        "--independent-path-verified",
+        action="store_true",
+        help="A separate management channel was tested and survives the change",
+    )
     safety_assess.add_argument("--recovery-reviewed", action="store_true")
     safety_assess.add_argument("--host-reboot-planned", action="store_true")
     safety_assess.add_argument(
@@ -657,6 +666,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Confirm that the reviewed plan ID and stated impact were explicitly approved",
     )
+    change_apply.add_argument(
+        "--accept-residual-risk",
+        action="store_true",
+        help=(
+            "Proceed on a warn guard decision after the user has seen the "
+            "residual risks and recovery path and explicitly accepted them"
+        ),
+    )
     change_apply.add_argument("--receipt")
 
     change_rollback = change_modes.add_parser(
@@ -682,6 +699,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--authorized",
         action="store_true",
         help="Confirm that rollback of the reviewed plan was explicitly approved",
+    )
+    change_rollback.add_argument(
+        "--accept-residual-risk",
+        action="store_true",
+        help=(
+            "Proceed on a warn guard decision after the user has seen the "
+            "residual risks and recovery path and explicitly accepted them"
+        ),
     )
     change_rollback.add_argument("--receipt")
     return parser
@@ -850,6 +875,7 @@ def execute(args: argparse.Namespace) -> int:
                 "dependency": args.dependency,
                 "change_surfaces": args.surface or ["unknown"],
                 "continuity_strategy": args.strategy,
+                "target_independence_verified": args.target_independence_verified,
                 "independent_path_verified": args.independent_path_verified,
                 "operator_recovery_reviewed": args.recovery_reviewed,
                 "host_reboot_planned": args.host_reboot_planned,
@@ -897,6 +923,7 @@ def execute(args: argparse.Namespace) -> int:
                     confirmed_plan_id=args.confirm_plan_id,
                     current_control_channel=current_control_channel,
                     receipt_path=args.receipt,
+                    accept_residual_risk=args.accept_residual_risk,
                 )
             )
         else:
@@ -917,6 +944,7 @@ def execute(args: argparse.Namespace) -> int:
                     apply_receipt_path=args.apply_receipt,
                     current_control_channel=current_control_channel,
                     receipt_path=args.receipt,
+                    accept_residual_risk=args.accept_residual_risk,
                 )
             )
         return 0

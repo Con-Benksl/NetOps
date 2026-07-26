@@ -198,6 +198,7 @@
         "dependency",
         "change_surfaces",
         "continuity_strategy",
+        "target_independence_verified",
         "independent_path_verified",
         "operator_recovery_reviewed",
         "host_reboot_planned"
@@ -227,7 +228,14 @@
         "continuity_strategy": {
           "enum": ["independent-path", "automatic-rollback", "manual-recovery"]
         },
-        "independent_path_verified": {"type": "boolean"},
+        "target_independence_verified": {
+          "description": "True only when the change target was verified to be off the agent's current network path.",
+          "type": "boolean"
+        },
+        "independent_path_verified": {
+          "description": "True only when a separate management channel was actually tested and survives disruption of the shared path.",
+          "type": "boolean"
+        },
         "operator_recovery_reviewed": {"type": "boolean"},
         "host_reboot_planned": {"type": "boolean"},
         "evidence": {

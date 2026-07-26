@@ -18,7 +18,8 @@
       "remote-proxy-service"
     ],
     "continuity_strategy": "independent-path",
-    "independent_path_verified": true,
+    "target_independence_verified": true,
+    "independent_path_verified": false,
     "operator_recovery_reviewed": true,
     "host_reboot_planned": false,
     "evidence": [

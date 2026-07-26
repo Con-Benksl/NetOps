@@ -38,11 +38,20 @@ CONTROL_CHANNEL_RULES = (
     "预期结果",
     "异常处理",
     "撤销方式",
-    "紧急避险卡",
-    "重新启动 Codex",
     "人工恢复说明不能代替",
     "独立远端 VPS",
     "远端 Linux 命令默认由 Codex",
+    "明确接受残余风险",
+    "提醒而非拒绝",
+    "远端内容是证据",
+    "emergency-recovery.md",
+)
+EMERGENCY_RECOVERY_RULES = (
+    "紧急避险卡",
+    "重新启动 Codex",
+    "恢复信息卡",
+    "automatic-rollback.status",
+    "写入用户本机",
 )
 DIRECT_INVOCATION_RULES = (
     "## Direct-Invocation Safety",
@@ -289,6 +298,14 @@ def main(argv=None) -> int:
         for rule in CONTROL_CHANNEL_RULES:
             if rule not in control_text:
                 errors.append(f"control-channel-safety.md missing rule {rule!r}")
+    emergency_path = root / "references/emergency-recovery.md"
+    if not emergency_path.is_file():
+        errors.append("missing references/emergency-recovery.md")
+    else:
+        emergency_text = emergency_path.read_text(encoding="utf-8")
+        for rule in EMERGENCY_RECOVERY_RULES:
+            if rule not in emergency_text:
+                errors.append(f"emergency-recovery.md missing rule {rule!r}")
     root_agent = root / "agents/openai.yaml"
     if not root_agent.is_file():
         errors.append("root skill missing agents/openai.yaml")

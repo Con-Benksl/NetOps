@@ -1,407 +1,331 @@
 # NetOps
 
-Evidence-led VPS and proxy diagnostics, controlled changes, and rollback for
-Codex and the command line.
-
-[English](README.md) | [简体中文](README.zh-CN.md)
+**English** · [简体中文](README.zh-CN.md)
 
 [![test](https://github.com/Con-Benksl/NetOps/actions/workflows/test.yml/badge.svg)](https://github.com/Con-Benksl/NetOps/actions/workflows/test.yml)
-[![GitHub release](https://img.shields.io/github/v/release/Con-Benksl/NetOps?sort=semver)](https://github.com/Con-Benksl/NetOps/releases/latest)
-![Python](https://img.shields.io/badge/Python-3.10--3.14-3776AB?logo=python&logoColor=white)
-[![MIT License](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
+[![licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.10%20to%203.14-blue.svg)](https://www.python.org/)
+[![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](pyproject.toml)
 
-Proxy failures rarely belong to one box. A timeout may start on the client, in
-the access network, at DNS, on the VPS, inside Xray routing, at an upstream
-egress, or at the destination. NetOps records what each observable segment can
-prove instead of turning one ping, traceroute, or public-IP lookup into a
-verdict.
+When a proxy or VPS breaks, the hard part is almost never the missing command. It is not knowing **which segment** is broken: your laptop, your local network, the VPS inbound, the proxy routing, the upstream exit, or the destination itself. NetOps finds the segment before it touches anything.
 
-The repository contains a Chinese-first Agent Skill collection and a
-standard-library-only Python CLI. Beginners can describe the symptom to Codex.
-Operators can collect machine-readable evidence, compare two observations,
-export redacted support bundles, and run reviewed remote transactions with
-backup and rollback.
+It ships as a set of Agent Skills for Codex and Claude Code, plus a diagnostic CLI that uses only the Python standard library. You can describe a symptom in plain language, or run the scans yourself.
 
-> [!IMPORTANT]
-> Use NetOps only on systems you own or are explicitly authorized to manage.
-> It is not a port scanner, credential tester, traffic interceptor, or
-> substitute for provider-side telemetry.
+The working order is fixed: **scan first, conclude second; protect the agent's own network path before changing the network.**
 
-## Start here
+## The segment model
 
-Choose the interface that matches how you work:
+A single proxied connection crosses roughly these positions:
 
-| Interface | Best for | Requirements |
-| --- | --- | --- |
-| Codex Skills | Natural-language diagnosis and guided VPS work | Node.js 22.20.0 or newer |
-| `netopsctl` | Repeatable scans, JSON output, support bundles, and reviewed change plans | Python 3.10-3.14 |
+```text
+your computer -> local network -> VPS inbound -> proxy routing -> upstream exit -> destination
+```
 
-### Install the Codex Skills
+Every observation NetOps records carries a vantage point, a timestamp, a confidence level, and its limitations. Segments it cannot see are reported as unobservable rather than guessed. A traceroute or an ASN lookup is evidence from one vantage point, not a complete physical route, and NetOps says so in the report instead of drawing a confident line through a carrier's internals.
 
-Install from a reviewed release tag. The first `skills` command is read-only:
-it should find one root Skill and five workflow Skills. The second command
-installs that exact set globally for Codex.
+It also refuses to shortcut. A region name, an ISP name, or a destination site name never selects a conclusion on its own. Device, access type, address family, protocol, inbound, exit, and target are established first, then the evidence narrows the range.
+
+## The control channel gate
+
+This is the part worth your attention.
+
+The agent fixing your network may be reaching the internet **through the very proxy it is about to restart**. Restart the wrong service and the agent disconnects along with you, mid transaction, with the verification step never run and the rollback never triggered. Most tooling in this space treats operator connectivity as the operator's problem. NetOps models it as a first class safety constraint that every workflow shares.
+
+Before any action that can restart a proxy, take over TUN, or change DNS, routes, firewall rules, a node, or a VPS, the gate classifies the change and returns a machine readable decision. As of 0.3.2 the decision is only ever `allow` or `warn`. There is no unconditional block. The ladder is:
+
+1. **Risk resolved** (`decision: allow`). The target is proven independent of the agent's current path, or a complete automatic rollback contract covers every declared target. Proceed under normal authorisation: show impact, backup, verification, and rollback, then get an explicit yes.
+2. **Risk unresolved on a remote target** (`decision: warn`, `can_apply_with_acknowledgment: true`). The gate does not refuse. It presents a risk card: what breaks, the recovery path, the residual risks, and the safer alternatives. The change proceeds only after the user explicitly accepts the residual risk for that specific operation, via `--accept-residual-risk`, and the accepted risks are written into the receipt as `acknowledged_risks`.
+3. **Local control plane** (`execution_mode: manual-local-control-plane`, `can_apply_with_acknowledgment: false`). Switching local TUN, the system proxy, an active proxy process, DNS, routes, or the firewall stays outside the remote executor no matter what the user consents to, because consent cannot keep a socket open. The user performs that one switch; the agent confirms it is still online and then continues the remote work itself.
+
+Consent is per operation and is recorded. It is not a mode you can leave switched on.
+
+Two consequences worth stating plainly. A "backup node" inside the same proxy application is usually **not** an independent channel, because restarting that application or its TUN interface drops every node at once; a phone hotspot, a second device, a separate proxy process, or a provider console verified in advance is what actually qualifies. And if the connection is already lost, the fix is not to delete configuration or reinstall: shut down the TUN or system proxy under test, move to a known good independent network, confirm ordinary HTTPS works, restart the agent, and hand it the change summary or plan ID, the backup location, and the last completed step. Full procedure in [`references/control-channel-safety.md`](references/control-channel-safety.md).
+
+## Quick start
+
+No packages to install, no dependencies to resolve. Clone at the reviewed tag and run a bounded read only scan of the machine you are sitting at.
 
 ```bash
-git clone --branch v0.3.1 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.4.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+cd NetOps
+python3 scripts/netopsctl.py scan client --output client.json
+```
+
+Requires Python 3.10 to 3.14. If the `v0.4.0` tag does not exist, that clone is meant to fail; do not fall back to `main` or to a floating version.
+
+Optionally install it as a command:
+
+```bash
+python3 -m pip install .
+netopsctl --help
+```
+
+### As an Agent Skill
+
+Requires Node.js 22.20.0 or newer. Install from an exact reviewed release tag. Never hand a floating branch or a `latest` pipeline to a shell; both the installer version and the NetOps tag below are pinned. The installer may go non interactive inside an agent environment, so list first and confirm that exactly `netops` and its five sub Skills are discovered, then install as a separate step.
+
+```bash
+git clone --branch v0.4.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -l --full-depth
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
 ```
 
-On PowerShell, use the same clone command and run:
+After that, describe the situation. The router picks one workflow and asks at most three questions per turn, two or three explained options each, recommended option first, and never asks you to guess something a read only scan can discover.
 
-```powershell
-$env:NPM_CONFIG_CACHE = Join-Path $env:TEMP "netops-npm-cache"
-npx skills@1.5.19 add ./NetOps -l --full-depth
-npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
-```
+## A worked example
 
-In a Codex environment, the installer may print `installing non-interactively`
-before the list command. Check the final section: `Available Skills` means the
-six Skills were only discovered; the global copy happens in the second
-command.
+Symptom: a node connects, works for a while, then times out on everything.
 
-Do not silently fall back to `main` when the tag is unavailable. Once
-installed, ask for the outcome you actually need:
-
-```text
-Read-only scan this computer and my VPS, then locate where the node starts timing out.
-
-Compare these two diagnostic bundles and tell me which segment changed.
-
-Add a VLESS Reality inbound with a dedicated SOCKS egress. Preserve every
-existing node and the VPS default route.
-
-Generate a monitoring scheduler review plan. Do not install a scheduled task.
-```
-
-When a missing fact changes the next action, NetOps asks at most three short
-questions with explained choices. Facts that a read-only scan can discover are
-not pushed back to the user as homework.
-
-### Run the CLI
-
-The core package has no runtime dependency outside the Python standard library.
+**Step 1. Establish the local facts before blaming the server.** This is read only and stays on the machine.
 
 ```bash
-git clone --branch v0.3.1 --depth 1 https://github.com/Con-Benksl/NetOps.git
-cd NetOps
-python3 -m pip install .
-netopsctl --version
-netopsctl scan client --output client.json
+python3 scripts/netopsctl.py scan client --output client.json
 ```
 
-On Windows, `py -3` can be used in place of `python3`. The operator examples
-below use POSIX line continuation; PowerShell users can put the arguments on
-one line or replace each trailing backslash with a backtick.
-
-The last command creates `client.json` and a Chinese beginner report at
-`client.md`. It does not query public egress services unless `--external` is
-present, and it refuses to overwrite either file.
-
-## The operating model
-
-A proxy path is treated as a set of separately observable segments:
-
-```mermaid
-flowchart LR
-    A[Client] --> B[Local and access network]
-    B --> C[VPS ingress]
-    C --> D[Proxy core and routing]
-    D --> E[VPS or upstream egress]
-    E --> F[Destination]
+```json
+{
+  "bundle": "/home/you/client.json",
+  "report": "/home/you/client.md",
+  "run_id": "642dbb91-f43e-448f-a865-f45c312804f8"
+}
 ```
 
-NetOps follows four steps:
+Two files land: `client.json` for programs, `client.md` for humans. The Markdown report is written in Chinese and follows a fixed eight section order, so you always know where to look:
 
-1. Discover the environment without guessing the city, carrier, address
-   family, protocol, or egress.
-2. Mark each segment as observed, partially observed, failed, or unknown, with
-   timestamped evidence and limitations.
-3. Recommend one next action that can distinguish the leading explanations.
-4. If a change is authorized, preserve unaffected state, back up the target,
-   validate before apply, verify new and old behavior, and roll back on failure.
-
-An unobservable carrier or provider segment stays unobservable. NetOps does not
-draw a complete physical route from a single traceroute.
-
-## What it can do
-
-| Area | Command or Skill | Behavior |
+| # | Section | What it answers |
 | --- | --- | --- |
-| Client discovery | `netopsctl scan client` | Reads interfaces, routes, DNS, TUN hints, proxies, and IPv4/IPv6 state |
-| VPS discovery | `netopsctl scan server` | Reads resources, time, routes, policy rules, firewall state, listeners, and services locally or over authorized SSH |
-| Node checks | `netopsctl scan node` | Runs bounded DNS, TCP/UDP, TLS, HTTP, proxy, or selected external-tool checks against one declared target |
-| Comparison | `netopsctl scan compare` | Compares compatible observations from the same target, protocol, and time window |
-| External tools | `netopsctl tools` | Discovers and capability-checks MTR, NextTrace, dnsdiag, testssl.sh, IPQuality, and iperf3 |
-| Support bundles | `netopsctl bundle` | Exports and inspects redacted, checksummed ZIP archives |
-| Control-path safety | `netopsctl safety assess` | Classifies whether a proposed change can disconnect Codex |
-| Remote transactions | `netopsctl change` | Hashes plans, binds pre-state, applies an authorized exact plan, and records rollback receipts |
-| Monitoring review | `netopsctl monitor` | Produces dry-run scheduler material and checks owned local state; it does not install or remove tasks |
+| 1 | 一句话结论 | The one sentence conclusion |
+| 2 | 检测到的环境 | Environment actually detected |
+| 3 | 可观测链路 | Observable path, segment by segment |
+| 4 | 异常区段 | Which segment is anomalous |
+| 5 | 证据 | Evidence supporting the conclusion |
+| 6 | 推荐下一步 | The single most useful next step |
+| 7 | 无法观测的部分 | What could not be observed |
+| 8 | 进阶解释 | Background for readers who want it |
 
-NetOps can help with intermittent timeouts, cross-device differences,
-inaccessible 3x-ui panels, TUN and IPv6 routing mistakes, destination refusal,
-per-node SOCKS/HTTP egress, VLESS Reality or Hysteria2 deployment, TLS and DNS
-changes, and fleet drift. Protocol names and provider labels do not bypass the
-evidence step.
+Sections 4 and 6 are usually enough. High latency, loss at one hop, or a changed public IP are clues; none of them proves a cause on its own.
 
-## Safety without getting in the way
-
-The safety boundary follows the path carrying the current Codex session. It is
-not a blanket ban on SSH writes.
-
-| Situation | `execution_mode` | What happens |
-| --- | --- | --- |
-| Read-only discovery | `read-only` | The scan runs within its declared bounds |
-| Independent remote VPS, no local network change | `direct-ssh-or-plan` | After one impact confirmation, Codex may back up, run the Linux commands, validate, verify, and roll back directly over SSH |
-| Shared/current remote path with automatic rollback | `exact-plan` | Use a reviewed immutable plan, fresh control-path evidence, complete backup coverage, and an armed rollback timer |
-| Local TUN, system proxy, proxy process, DNS, route, or firewall switch that may cut Codex off | `manual-local-control-plane` | The user performs one local switch; Codex resumes the remote work afterward |
-| Scheduler installation or removal | unavailable in v0.3.1 | `monitor install/remove` remains fail-closed and accepts dry-run review only |
-
-Direct SSH still requires explicit authorization, an affected-state backup,
-pre-apply validation, post-apply verification, an executable rollback, and a
-concise receipt. An independent target can also choose the exact-plan executor
-for a file transaction; its control-path mode remains `direct-ssh-or-plan`.
-A shared path reaches `exact-plan` only after its automatic rollback contract
-passes the guard.
-
-A second node inside the same proxy application is usually not an independent
-control path. Restarting that application or its TUN can remove both nodes at
-once. See [Control-channel safety](references/control-channel-safety.md) for
-the decision rules and recovery card.
-
-## Operator examples
-
-### Check one HTTPS destination
+**Step 2. Probe the declared node.** Same output shape, this time with TLS and HTTP timings per step.
 
 ```bash
-netopsctl scan node \
-  --target example.com \
-  --port 443 \
-  --tls \
-  --http \
-  --output node.json
+python3 scripts/netopsctl.py scan node \
+  --target example.com --port 443 --tls --http --output node.json
 ```
 
-### Add one bounded external tool
-
-External adapters run only when selected and authorized. This example adds a
-five-cycle MTR observation to the declared target:
+**Step 3. Compare two machines** when the node behaves differently on each. The comparison only runs when target, protocol, and time window are compatible.
 
 ```bash
-netopsctl tools list
-netopsctl tools status --versions
+python3 scripts/netopsctl.py scan compare left.json right.json --output comparison.json
 ```
 
-`detected` means that a local file was found. An adapter becomes `usable` only
-after its version and every required command-line capability pass inspection.
+**Step 4. Check the control channel before changing anything.** Suppose the fix means restarting the proxy service on a VPS, and you have not yet proven your agent is not routed through it:
 
 ```bash
-netopsctl scan node \
-  --target example.com \
-  --port 443 \
-  --protocol tcp \
-  --tls \
-  --tool mtr \
-  --external \
-  --output node-mtr.json
+python3 scripts/netopsctl.py safety assess \
+  --dependency shared --surface remote-proxy-service \
+  --strategy automatic-rollback --rollback-delay 300 \
+  --recovery-reviewed --evidence "rollback timer armed"
 ```
 
-`--external` on a node scan consents to the selected adapter's declared
-network requests. Client and local-server adapters use the separate
-`--tool-external` flag. A bounded iperf3 run also requires `--allow-load`.
-NetOps never downloads a missing adapter or runs an unpinned `curl | bash`
-installer.
-
-### Compare two observations
-
-```bash
-netopsctl scan compare \
-  before.json \
-  after.json \
-  --output comparison.json
+```json
+{
+  "guard": {
+    "acknowledgment_required": true,
+    "can_apply": false,
+    "can_apply_with_acknowledgment": true,
+    "decision": "warn",
+    "execution_available": true,
+    "execution_mode": "read-only",
+    "reasons": ["尚未提供与本次变更目标绑定的自动回滚合同。"],
+    "risk": "unresolved"
+  },
+  "rollback_timer": {"delay_seconds": 300, "enabled": true}
+}
 ```
 
-The comparison is rejected when the target or diagnostic configuration is not
-compatible. Similar failures on both sides are not reported as healthy.
+That is a reminder, not a dead end. `can_apply_with_acknowledgment: true` means the operation can still go ahead once the risk card has been shown and the user has explicitly accepted the residual risk for this operation. Had the change touched local TUN or the system proxy, `execution_mode` would read `manual-local-control-plane` and that flag would be `false`.
 
-### Export a support bundle
-
-```bash
-netopsctl bundle export node.json --output node-support.zip
-netopsctl bundle inspect node-support.zip --report-output node-support-review.md
-```
-
-The export removes network identifiers and likely credentials by default.
-Checksums prove that archive members are internally consistent; they are not a
-signature and do not prove who created the archive. Review every bundle before
-sharing it.
-
-### Apply an exact reviewed change
+**Step 5. Plan, authorise, apply.** The reviewed plan and the execution are bound together by an ID, so what you approved is what runs.
 
 ```bash
-netopsctl change plan \
-  --spec change-spec.json \
-  --fleet fleet.json \
-  --output change-plan.json
-
+netopsctl change plan --spec change-spec.json --fleet fleet.json --output change-plan.json
 netopsctl change apply \
   --plan change-plan.json \
   --fleet fleet.json \
   --current-control-channel current-control-channel.json \
-  --confirm-plan-id "$PLAN_ID" \
+  --confirm-plan-id REVIEWED_PLAN_ID \
   --authorized \
   --receipt change-apply.receipt.json
 ```
 
-Set `PLAN_ID` to the complete ID printed by the reviewed plan. When the Skill
-drives the workflow, Codex creates the fresh control-channel evidence file;
-CLI operators must provide evidence that exactly matches the reviewed plan.
+`current-control-channel.json` holds only `observed_at` and a `control_channel` block identical to the plan's, observed no more than 15 minutes earlier. Working through the Skill, the agent generates it from the check it just ran; you do not hand write it. The executor stops before the first remote write if `--authorized` is missing, the plan ID does not match, the plan is older than 24 hours, the control channel evidence has expired or changed, the on host files have drifted, or the gate recomputes to `warn` without `--accept-residual-risk` for this run. Read the receipt before retrying: `rollback-pending` means an armed automatic rollback is still running and you should wait rather than reapply, and `consent-required` means the gate warned, consent was not supplied, and nothing was changed.
 
-The apply step stops before the first remote write if authorization is missing,
-the plan ID differs, the plan is older than 24 hours, control-path evidence is
-older than 15 minutes, the target pre-state changed, or backup and rollback
-coverage is incomplete. If a receipt says `rollback-pending`, wait for the
-armed rollback and inspect its final status before trying another apply.
+## Command reference
 
-### Review monitoring without installing a task
+Once installed, every example below also works with the bare `netopsctl` entry point.
 
-```bash
-netopsctl monitor install \
-  --target example.com \
-  --port 443 \
-  --scope user \
-  --dry-run
+| Command | What it does |
+| --- | --- |
+| `netopsctl scan client` | Read only scan of the machine you are on |
+| `netopsctl scan node` | Probe a declared node: resolution, TCP/UDP, TLS, HTTP, per step timings |
+| `netopsctl scan server` | Local or authorised remote VPS state |
+| `netopsctl scan compare` | Compare two bundles collected under matching conditions |
+| `netopsctl tools status` | What curated tools are present and actually usable |
+| `netopsctl safety assess` | Control channel decision before any change |
+| `netopsctl change plan` / `apply` / `rollback` | The exact plan executor |
+| `netopsctl monitor install --dry-run` | Non executable scheduling review material only |
+| `netopsctl bundle export` / `inspect` | Redacted support archive, and its verification report |
 
-netopsctl monitor status --scope user
-```
+`safety assess` reports a machine readable `execution_mode`, which is the boundary every workflow obeys:
 
-The install command returns non-executable review material. Status checks only
-owned local files, lifecycle markers, permissions, and hashes; it does not
-query systemd, launchd, or Task Scheduler. Compatibility sampling for a valid
-earlier installation stores bounded anonymous state for up to 7 days or 200 MB
-and does not retain targets, hostnames, raw command output, headers, or node
-links.
+| `execution_mode` | Meaning |
+| --- | --- |
+| `direct-ssh-or-plan` | The target is proven off the agent's path; direct SSH or the exact plan executor may proceed after authorisation |
+| `exact-plan` | A shared path with a complete rollback contract; only the exact plan executor, with the timer armed before the first write |
+| `manual-local-control-plane` | Touches the local TUN, system proxy, DNS, routes, or firewall; the user performs that switch, consent cannot delegate it |
+| `read-only` | Path facts are still missing; establish them before changing anything |
 
-## Reports, data, and privacy
+## What it inspects
 
-Every scan writes a versioned JSON diagnostic bundle and a Chinese Markdown
-report. The report starts with the first directly supported failure segment,
-then shows the environment, visible path, evidence, one recommended next step,
-and what could not be observed. A successful command is not automatically a
-healthy path.
+| Vantage point | What is collected |
+| --- | --- |
+| Client | OS, active interfaces, default route, DNS, TUN traces, IPv4/IPv6 |
+| VPS | Resource use, system clock, routes, policy routing, firewall, listening ports, service state |
+| Node | Name resolution, TCP/UDP reachability, TLS handshake, HTTP response, per step timings |
+| 3x-ui / Xray | Version, service state, presence of the usual config files; inbounds, outbounds, and routing rechecked before any change |
+| Curated tools | MTR, NextTrace, dnsdiag, testssl.sh, IPQuality, iperf3, chosen per question and never all run by default |
+| Two device comparison | Two bundles compared when target, protocol, and time window match |
 
-NetOps keeps these boundaries:
+## The five workflows
 
-- Public-IP lookups require `--external`.
-- Curated tools require an explicit tool name and their matching consent flag.
-- High-traffic tests require separate load consent.
-- Client control-path scans record whether a system proxy is active, not its
-  PAC URL, endpoint, or credential-bearing environment values.
-- Support exports remove IPs, domains, MAC addresses, user directories, node
-  links, credential UUIDs, proxy credentials, and common API tokens by default.
-  Keeping network identifiers requires the explicit
-  `--include-network-identifiers` option.
-- Real fleet metadata belongs in a private overlay that conforms to
-  [`schemas/fleet.schema.json`](schemas/fleet.schema.json). The public
-  repository contains anonymous examples only.
-- NetOps does not capture packets or run an indefinite background probe.
-
-Redaction is deliberately conservative, but no heuristic can prove that an
-arbitrary opaque string is harmless. Inspect an exported ZIP before sending it
-to another person or uploading it to an issue.
-
-## Skill map
-
-Use `netops` as the public entry point. It routes one request to one primary
-workflow:
+Day to day you only need the router, `netops`. It selects exactly one primary workflow.
 
 | Skill | Responsibility |
 | --- | --- |
-| `netops-start` | Explain unfamiliar terms and choose the first observation point |
-| `netops-scan` | Collect read-only evidence from clients, VPS hosts, nodes, and saved monitoring state |
-| `netops-build` | Audit, plan, and perform authorized 3x-ui, Xray, node, DNS, TLS, and egress changes |
-| `netops-fix` | Diagnose disconnects, timeouts, TUN, DNS, IPv6, and destination refusal |
-| `netops-manage` | Handle backups, upgrades, security, capacity, fleet drift, and dry-run monitoring review |
+| `netops-start` | Explains terminology and helps a first time VPS user decide where to begin |
+| `netops-scan` | Scans client, VPS, node, and the currently observable transport path |
+| `netops-build` | Audits, plans, and after explicit authorisation executes 3x-ui, Xray, node, DNS, TLS, dedicated exit, or standards changes |
+| `netops-fix` | Diagnoses disconnects, timeouts, TUN, DNS, IPv6, and destination refusals |
+| `netops-manage` | Reviews monitoring plans and existing data; executes backup, upgrade, security, capacity, fleet standard and drift, and user lifecycle changes under the same gate. Still installs no scheduled tasks |
 
-The project keeps exactly these five broad workflows. Protocol notes,
-provider-specific behavior, and incident examples live in `references/`
-instead of becoming more Skills.
+Protocol notes and individual incident write ups live in `references/`. A new destination site or a new carrier never earns a sixth Skill.
 
-## Documentation
+## Curated external tools
 
-| Read next | What it contains |
-| --- | --- |
-| [Observable path](references/observable-path.md) | Vantage points, confidence, and what a scan cannot prove |
-| [Control-channel safety](references/control-channel-safety.md) | Direct SSH, shared paths, rollback timers, and emergency recovery |
-| [Curated tools](references/curated-tools.md) | Versions, capability gates, permissions, and data disclosure |
-| [Troubleshooting model](references/troubleshooting-model.md) | Evidence-led fault isolation |
-| [Beginner reporting](references/beginner-reporting.md) | Chinese report order and language rules |
-| [Glossary](references/glossary.md) | VPS, ingress, egress, TUN, DNS, IPv4/IPv6, and proxy terms |
-| [Case library](references/cases/README.md) | Parameterized examples without real infrastructure identifiers |
-| [Build runbook](references/build-runbook.md) | Review and verification rules for 3x-ui/Xray work |
-| [Fleet example](examples/fleet.example.json) | Public, anonymous private-overlay structure |
-| [Change example](examples/change-spec.example.json) | Schema 3.0 exact-transaction input |
+When the built in scans cannot answer the next question, NetOps can drive six actively maintained tools with parseable output. They are optional adapters, not trusted conclusions.
 
-## Compatibility and release boundaries
+| Tool | Answers | Default bound |
+| --- | --- | --- |
+| MTR | Sustained latency, jitter, loss | 5 cycles, declared target only |
+| NextTrace | TCP/UDP forward path snapshot | 3 samples, 30 hops, third party GeoIP off by default |
+| dnsdiag | Latency and loss against a chosen resolver | Resolver must be stated explicitly |
+| testssl.sh | TLS protocols, certificate, default parameters | Focused check, no bulk scanning |
+| IPQuality | Reputation and classification clues for the current exit | Privacy mode, installs nothing, still queries several providers |
+| iperf3 | Controlled performance sample between two endpoints you own | 5 second cap, separate consent for a load test |
 
-| Contract | Current value |
-| --- | --- |
-| Stable release used in examples | `v0.3.1` |
-| Python | `3.10` through `3.14` |
-| Core runtime dependencies | Python standard library only |
-| Change spec and plan schema | `3.0`; schema `2.0` plans must be regenerated |
-| Fleet and diagnostic bundle schema | `2.0` |
-| Scheduled monitor mutation | Not released; dry-run review and owned-file status only |
-
-Release `v0.3.0` is superseded by `v0.3.1` because the earlier remote backup
-transaction accidentally enabled shell xtrace. Use `v0.3.1` or newer.
-
-CI runs on Linux with Python 3.10-3.14 and on macOS and Windows with Python
-3.10, 3.12, and 3.14. Platform-specific commands are tested with fixtures; CI
-does not connect to a real VPS or write a scheduler.
-
-## Development
-
-The normal gate uses only the repository and Python. Strict schema validation
-adds one pinned development dependency:
+Check what is present without sending a single probe:
 
 ```bash
-python3 -m pip install "jsonschema==4.25.1"
-python3 -m unittest discover -s tests -v
-python3 scripts/check_secrets.py .
-python3 scripts/validate_skills.py .
-python3 scripts/release_check.py . --require-jsonschema
+python3 scripts/netopsctl.py tools list
+python3 scripts/netopsctl.py tools status --versions
 ```
 
-Release artifacts must also pass the reproducible-build and fresh-install
-gates:
+In that status, `detected` only means a local file was found. `usable` (and the compatibility field `available`) turns true only when version, argument capability, and the required checks all pass.
+
+Consent is split deliberately. On a node scan, `--external` means you agree to let the selected tool talk to the target, resolver, or provider it declared:
+
+```bash
+python3 scripts/netopsctl.py scan node \
+  --target example.com --port 443 --protocol tcp --tls \
+  --tool mtr --external --output node-mtr.json
+```
+
+On a client or local server scan the flag is `--tool-external` instead, so that consenting to a tool is never mistaken for consenting to a public egress identity lookup. `--tool` accepts `{mtr,nexttrace,dnsdiag,testssl,iperf3}` on node scans and `{ipquality}` on client and server scans. iperf3 additionally requires `--allow-load`. Scripts such as IPQuality are never auto downloaded; when missing, NetOps prints the official source and how to point at your own copy. Compatibility rules are in [`references/curated-tools.md`](references/curated-tools.md).
+
+## Sharing results
+
+Export a redacted, self checking support bundle:
+
+```bash
+netopsctl bundle export diagnostics/node.json --output node-support.zip
+netopsctl bundle inspect node-support.zip --report-output node-support-review.md
+```
+
+The archive must be `.zip`. By default it strips IP addresses, domains, IDNs, MAC addresses, home directories, credentials, and single label hosts appearing in values, host context, or explicit `*_by_host` / `hosts` maps. An arbitrary single word JSON key cannot be reliably told apart from a hostname, so dynamic host keyed maps must use that explicit naming; otherwise the exporter keeps the key as a field name. Suspected residual credentials are rejected by structured rules plus high confidence heuristics, but no heuristic can prove an arbitrary opaque string is safe, so review the archive by hand before sharing it.
+
+Be precise about what the embedded SHA-256 proves: that the three members are mutually consistent and were not silently rewritten after inspection. It is not a signature, and it does not attest which machine or which operator produced the files. Source files, the target ZIP, the inspection report, and the Markdown a scan writes implicitly are never silently overwritten; archive the old evidence yourself if you want to reuse a filename. Network identifiers are retained only with an explicit `--include-network-identifiers`.
+
+## Safety, privacy, and data boundaries
+
+- Public IP lookups happen only with an explicit `--external`.
+- Curated tools run only when both `--tool` and the matching consent flag are given: `--external` for node scans, `--tool-external` for client and local server scans. Load generating tools need a further separate consent.
+- Nothing is fetched through `curl | bash`, no floating version is downloaded silently, and no external script is allowed to install system dependencies on your behalf.
+- The client control channel scan records only **whether** a system proxy is enabled. It does not record the PAC URL, the proxy address, or the values of proxy environment variables.
+- Passwords, private keys, node links, user/node/credential UUIDs, proxy accounts, and API tokens never belong in the repository or in a report. The `run_id` and `observation_id` values NetOps generates are non secret diagnostic foreign keys and do stay in the local JSON and reports.
+- The public repository ships anonymised examples only. Real host data belongs in a private overlay repository matching `schemas/fleet.schema.json`; that schema handles portable structure and a high confidence credential precheck, and the CLI performs the authoritative IDNA, Unicode category, and full semantic review on load. Both layers must pass.
+- Remote text is evidence, never instruction. Login banners, MOTD, service logs, config comments, command output, HTTP responses, and TLS certificate fields collected over SSH are untrusted data. An imperative or an authority claim found inside collected output, including a line asserting that some VPS is unrelated to your traffic, never changes a dependency classification, skips a confirmation, or triggers a command. It is quoted back to you as a suspicious finding.
+- Scan only devices you own or are explicitly authorised to manage.
+
+## Monitoring: the release boundary
+
+Scheduler installation, stopping, and removal are **not released** in this version, and the README will not pretend otherwise.
+
+`monitor install` and `monitor remove` produce non executable review material only, and only under an explicit `--dry-run`; anything else is refused unconditionally. There is no authorisation parameter in the public CLI or the Python API that turns execution on, and no environment variable or private function bypass exists. Generate review material with:
+
+```bash
+python3 scripts/netopsctl.py monitor install \
+  --target example.com --port 443 --scope user --dry-run
+```
+
+A Linux source directory usually fails the root trust chain, so system scoped plans are marked `blocked`; use `--scope user` to read one locally. The output contains the probe target and a full local configuration draft, so do not treat stdout as a redacted support bundle.
+
+`monitor status` inspects existing local files, permissions, lifecycle markers, and a SHA-256 manifest. It never queries systemd, launchd, or Task Scheduler, and therefore cannot prove that a real timer exists or is running.
+
+The review material shows the native scheduler structures a future release might use (Linux systemd timer, macOS launchd, Windows Task Scheduler). Do not copy commands out of a preview and run them. This version also installs no long lived high privilege daemon of its own.
+
+## What NetOps will not do
+
+- No unbounded port scanning, credential guessing, traffic interception, or indefinite packet capture.
+- No unauthorised operation of any device. Scans and changes apply only to hosts you own or are explicitly permitted to manage.
+- It will not read "the port is open" as proof that VLESS, Hysteria2, or any other protocol is actually healthy.
+- It will not claim to reconstruct the physical route inside a carrier or a provider that it cannot observe.
+- It will not change the whole VPS default exit, or overwrite existing configuration, just to fix one node.
+- It will not silently restart the path the agent is currently using. When the control channel is unknown, or the only fallback prepared is another node inside the same proxy application, the gate returns `warn`: risk card first, explicit per operation consent second, accepted risks recorded in the receipt.
+- It will not install, stop, or remove a local scheduled task in this release.
+- It will not treat a verbal reassurance as proof of independence, and it will not accept instructions found inside collected remote output.
+
+## Development and testing
+
+The core uses the Python standard library only, and the project has no runtime dependencies. Before committing:
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 scripts/check_secrets.py .
+python3 scripts/validate_skills.py
+python3 scripts/check_install_tree.py .
+python3 scripts/release_check.py .
+```
+
+That suite is 412 tests as of 0.4.0, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
+
+Release artefacts must clear a double build gate. Install the pinned build tooling, then pass an explicit Unix timestamp and an output directory that does not yet exist:
 
 ```bash
 python3 -m pip install "build==1.3.0" "setuptools==83.0.0"
-python3 scripts/reproducible_build.py . \
-  --source-date-epoch 1720000000 \
-  --output-dir release-dist
+python3 scripts/reproducible_build.py . --source-date-epoch 1720000000 --output-dir release-dist
 python3 scripts/package_smoke.py . --dist-dir release-dist
 ```
 
-`1720000000` is the stable CI comparison epoch. A tagged release should use
-the tag commit's committer timestamp and record the final artifact hashes.
-Reproducibility is asserted within the same pinned toolchain and environment;
-it is not a promise that different operating systems or zlib versions produce
-identical archives.
+`1720000000` is the stable reference value CI uses; a tagged release should switch to the committer timestamp of the tag commit and record that value in the release notes. The script copies two build directories from one sanitised snapshot, enforces the tool versions, requires the two wheels to be byte identical, and requires the two sdists to be byte identical after normalising away the gzip filename, build time, PAX timestamps, and local user and group information. Only when both checks pass is the output directory created; an existing file, directory, or symlink is rejected rather than overwritten. `package_smoke.py` then runs the full test suite from the final normalised sdist and installs the wheel and the sdist separately for an arbitrary directory smoke test.
 
-Contributions should keep the root router and exactly five workflow Skills,
-preserve the standard-library-only core, update tests and schemas when a
-contract changes, and use anonymous fixtures. Do not put real hostnames, IPs,
-credentials, node links, UUIDs, or private fleet data in a pull request or
-issue.
+Be clear about what that proves: reproducibility of one source snapshot under one controlled Python, setuptools, build, and runtime environment. It does not claim identical bytes across operating systems, GitHub runner images, Python patch releases, or zlib versions. For long term rebuilds, record those versions and the final SHA-256, or pin a release container digest.
 
-For a reproducible bug report, open a
-[GitHub issue](https://github.com/Con-Benksl/NetOps/issues) with the NetOps
-version, operating system, exact command, expected result, actual result, and a
-manually reviewed redacted bundle when it is relevant.
+CI covers Python 3.10 to 3.14 across 11 environments. Every minor version runs on Linux; 3.10, 3.12, and 3.14 also run on macOS and Windows. Every environment runs the double build gate and the arbitrary directory smoke test from the final normalised artefacts. Platform specific commands are verified with fixtures and command generation tests, so CI never connects to a real VPS or touches a scheduler.
 
-## License
+## Version history
 
-NetOps is available under the [MIT License](LICENSE).
+Changes, breaking changes, and schema upgrades are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Licence
+
+NetOps is released under the [MIT Licence](LICENSE). Use, modify, and redistribute it freely, including commercially, provided the original copyright and licence notice are retained. The project is provided as is, without warranty. See the `LICENSE` file for the full terms.

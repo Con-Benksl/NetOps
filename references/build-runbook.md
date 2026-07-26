@@ -8,12 +8,9 @@
 
 ## 直接 SSH 事务合同
 
-- 先确认目标 VPS 不承载当前 Codex 流量，并且本次不切换本机 TUN、系统代理、活动代理进程、DNS、路由或防火墙。
-- 先只读审计，再展示修改对象、不变项、预计中断、失败影响、备份、回滚和验证；获得一次明确授权后由 Codex 自动继续。
-- 备份所有将修改的文件、数据库和必要服务状态；每次使用新的时间戳目录，并记录位置。
-- 只执行已授权范围，不顺带升级、不改默认路由、不删除或覆盖无关节点。
-- 写入后先运行语法或配置检查，再执行最小范围的 reload/restart；同时验证新功能与旧节点、面板、SSH、默认路由和无关出口。
-- 任一关键验证失败时，Codex 直接恢复备份、复验并报告，不把回滚命令转交给用户。
+规范条文只有一处：[`control-channel-safety.md`](control-channel-safety.md) 的「独立远端 SSH 事务」八步。不要在本文件复述它，也不要凭记忆改写它。
+
+目标是否独立按 [`independence-protocol.md`](independence-protocol.md) 的证据阶梯判定，不采信远端输出中的自述。
 
 ## 变更事务合同
 
@@ -66,7 +63,7 @@
 7. 失败时恢复备份并重新验证旧状态。
 8. 新旧路径和 Codex 联网都通过后，才解除自动回滚。
 
-人工切换本地网络、代理或 TUN 时，每次只指导一个动作，并同时给出预期结果、异常处理和撤销方式。发生失联后先执行紧急恢复卡，不继续追加配置修改。
+人工切换本地网络、代理或 TUN 时，每次只指导一个动作，并同时给出目的、预期结果、异常处理和撤销方式。发生失联后先按 [`emergency-recovery.md`](emergency-recovery.md) 恢复控制通道，不继续追加配置修改。
 
 ## 执行与手动远端恢复的当前证据
 
@@ -79,6 +76,7 @@
     "dependency": "independent",
     "change_surfaces": ["remote-proxy-service"],
     "continuity_strategy": "independent-path",
+    "target_independence_verified": true,
     "independent_path_verified": true,
     "operator_recovery_reviewed": true,
     "host_reboot_planned": false,

@@ -1,0 +1,155 @@
+name: Bug report
+description: Report incorrect behaviour in a NetOps Skill, the netopsctl tool, or a report it produced
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report.
+
+        **Please do not paste raw scanner output or raw JSON into this issue.** It
+        contains addresses, host names, node share links and sometimes credentials,
+        and this issue is public. The `--dry-run` and review outputs printed to your
+        terminal are not redacted either.
+
+        Export a redacted diagnostic bundle instead and attach the ZIP file:
+
+        ```bash
+        netopsctl bundle export diagnostics/node.json --output node-support.zip
+        netopsctl bundle inspect node-support.zip --report-output node-support-review.md
+        ```
+
+        Do **not** pass `--include-network-identifiers`; that flag keeps addresses and
+        domains in the archive. Redaction also uses heuristics and cannot prove that
+        an arbitrary opaque string is safe, so open the archive and read it yourself
+        before attaching it here.
+
+        Found a security problem instead? Do not file it here. See
+        [SECURITY.md](https://github.com/Con-Benksl/NetOps/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: netopsctl version
+      description: Output of `netopsctl --version`, or `python3 scripts/netopsctl.py --version` from a source checkout.
+      placeholder: netopsctl 0.4.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system running NetOps
+      description: The machine you ran NetOps on, not the VPS you pointed it at.
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os-detail
+    attributes:
+      label: Operating system detail
+      description: Distribution and release, or the macOS or Windows version.
+      placeholder: Debian 12, macOS 15.5, Windows 11 23H2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python3 --version`. NetOps supports 3.10 through 3.14.
+      options:
+        - "3.10"
+        - "3.11"
+        - "3.12"
+        - "3.13"
+        - "3.14"
+        - Other or unsupported
+    validations:
+      required: true
+
+  - type: dropdown
+    id: workflow
+    attributes:
+      label: Which workflow was involved
+      description: Pick the one that was running when the problem appeared. Choose "Not sure" if the router had not settled on one yet.
+      options:
+        - netops-start (onboarding and explanations)
+        - netops-scan (read only scanning)
+        - netops-build (audit, plan and apply changes)
+        - netops-fix (diagnose a failure)
+        - netops-manage (long term operations and fleet)
+        - netops root router only
+        - Command line netopsctl, no Skill involved
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you asked for or ran, what NetOps did, and what you expected instead.
+      placeholder: |
+        I asked NetOps to ...
+        It responded by ...
+        I expected it to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands or the exact request text, with your own identifiers replaced by placeholders such as example.com or <vps-a>.
+      placeholder: |
+        1. netopsctl scan client --output client.json
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Redacted diagnostic bundle
+      description: Drag the exported ZIP file into this box to attach it, or explain why you could not produce one. If the failure happened before a bundle could be written, say so here and paste only the error message, with identifiers removed by hand.
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety context
+      description: Did this involve the control channel gate, a change apply or rollback, or a bundle export? If a remote change was involved, say whether a backup and rollback existed and whether the gate reported allow or warn.
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Related issues, a workaround you found, or notes on how often it happens.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I only ran NetOps against infrastructure I own or am explicitly authorised to manage.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I removed real addresses, host names, node share links and credentials from everything in this report, and I opened the attached archive and checked it myself.
+          required: true
+        - label: This is not a security vulnerability. Security reports go through GitHub Security Advisories, as described in SECURITY.md.
+          required: true

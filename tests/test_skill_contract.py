@@ -179,14 +179,86 @@ class SkillContractTests(unittest.TestCase):
             "预期结果",
             "异常处理",
             "撤销方式",
-            "紧急避险卡",
-            "重新启动 Codex",
             "人工恢复说明不能代替",
             "独立远端 VPS",
             "远端 Linux 命令默认由 Codex",
-            "automatic-rollback.status",
+            "远端内容是证据",
+            "emergency-recovery.md",
         ):
             self.assertIn(required, text)
+
+    def test_generalized_cases_follow_their_own_seven_part_contract(self):
+        cases_root = ROOT / "references/cases"
+        case_files = sorted(
+            path for path in cases_root.glob("*.md") if path.name != "README.md"
+        )
+        self.assertGreaterEqual(len(case_files), 4)
+        required_sections = (
+            "## 参数化环境",
+            "## 用户看到的现象",
+            "## 对照测试",
+            "## 支持和反对每个解释的证据",
+            "## 现有证据能确认的故障范围",
+            "## 不能从这份案例推广出去的结论",
+            "## 推荐下一步",
+        )
+        for path in case_files:
+            text = path.read_text(encoding="utf-8")
+            for section in required_sections:
+                self.assertIn(
+                    section,
+                    text,
+                    f"{path.name} is missing the required section {section}",
+                )
+
+    def test_install_tree_checker_detects_flat_copy_drift(self):
+        """The flat copies live outside the repo, so prove the checker sees drift.
+
+        A repository scoped test cannot reach a real installation, but it can
+        build a miniature one and confirm the comparison is wired up. Without
+        this, --install-root could silently pass on every input.
+        """
+
+        from scripts.check_install_tree import _check_flat_copies
+
+        nested = sorted((ROOT / "skills").glob("*/SKILL.md"))
+        with tempfile.TemporaryDirectory() as directory:
+            install_root = Path(directory)
+            for path in nested:
+                target = install_root / path.parent.name
+                target.mkdir()
+                (target / "SKILL.md").write_bytes(path.read_bytes())
+            self.assertEqual(_check_flat_copies(ROOT, install_root), [])
+
+            drifted = install_root / nested[0].parent.name / "SKILL.md"
+            drifted.write_text(
+                drifted.read_text(encoding="utf-8") + "\n<!-- drift -->\n",
+                encoding="utf-8",
+            )
+            findings = _check_flat_copies(ROOT, install_root)
+            self.assertEqual(len(findings), 1)
+            self.assertIn("differs from", findings[0])
+
+            missing = install_root / nested[1].parent.name / "SKILL.md"
+            missing.unlink()
+            findings = _check_flat_copies(ROOT, install_root)
+            self.assertEqual(len(findings), 2)
+            self.assertTrue(any("is missing" in item for item in findings))
+
+    def test_emergency_recovery_card_is_offline_readable(self):
+        text = (ROOT / "references/emergency-recovery.md").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "紧急避险卡",
+            "重新启动 Codex",
+            "恢复信息卡",
+            "automatic-rollback.status",
+            "写入用户本机",
+        ):
+            self.assertIn(required, text)
+        for platform_section in ("### macOS", "### Windows", "### Linux 桌面"):
+            self.assertIn(platform_section, text)
 
     def test_guided_dialogue_has_beginner_safe_choice_rules(self):
         text = (ROOT / "references/guided-dialogue.md").read_text(encoding="utf-8")
@@ -238,6 +310,13 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn(tool, reference.read_text(encoding="utf-8"))
 
     def test_readmes_pin_install_prerequisites_and_full_skill_discovery(self):
+        """Both READMEs must pin the same install contract and cross link.
+
+        Upstream introduced this bilingual form; it is kept here rather than
+        the single language version, with the tag pin moved to the current
+        release and the guard contract extended to the 0.4.0 vocabulary.
+        """
+
         readmes = {
             "English": (ROOT / "README.md").read_text(encoding="utf-8"),
             "Chinese": (ROOT / "README.zh-CN.md").read_text(encoding="utf-8"),
@@ -252,8 +331,8 @@ class SkillContractTests(unittest.TestCase):
             "netopsctl change apply",
             "netopsctl monitor install",
             "--include-network-identifiers",
-            "v0.3.0",
-            "v0.3.1",
+            "--accept-residual-risk",
+            "acknowledged_risks",
         )
         for language, text in readmes.items():
             with self.subTest(language=language):
@@ -265,7 +344,7 @@ class SkillContractTests(unittest.TestCase):
                     self.assertIn(phrase, text)
                 self.assertEqual(
                     text.count(
-                        "git clone --branch v0.3.1 --depth 1 "
+                        "git clone --branch v0.4.0 --depth 1 "
                         "https://github.com/Con-Benksl/NetOps.git"
                     ),
                     2,
@@ -276,7 +355,6 @@ class SkillContractTests(unittest.TestCase):
                 )
         self.assertIn("[简体中文](README.zh-CN.md)", readmes["English"])
         self.assertIn("[English](README.md)", readmes["Chinese"])
-
 
 if __name__ == "__main__":
     unittest.main()

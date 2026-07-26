@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Con-Benksl/NetOps/security/advisories/new
+    about: Do not open a public issue. Use private vulnerability reporting; the scope and the response timeline are in SECURITY.md.
+  - name: Security policy
+    url: https://github.com/Con-Benksl/NetOps/blob/main/SECURITY.md
+    about: What is in scope, what is out of scope, and how quickly you can expect a reply.
+  - name: Contributing guide
+    url: https://github.com/Con-Benksl/NetOps/blob/main/CONTRIBUTING.md
+    about: Architecture, the rules a change has to satisfy, and the local gate to run before opening a pull request.

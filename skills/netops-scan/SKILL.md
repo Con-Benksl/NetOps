@@ -1,6 +1,6 @@
 ---
 name: "netops-scan"
-description: "Read-only environment, VPS, proxy-node, and observable-path scanning for Windows, macOS, and Linux, with guided mobile checks. Use before diagnosing uncertain network behavior, comparing two clients, establishing a baseline, or collecting an incident bundle. Offer explained observation-scope choices when the starting point is unclear. Reports evidence, confidence, and blind spots instead of claiming a complete physical route."
+description: "Read-only environment, VPS, proxy-node, and observable-path scanning for Windows, macOS, and Linux, with guided mobile checks. Use as the FIRST step whenever a failure is reported but the failing segment is still unknown (cannot connect, disconnects, slow, timeouts, packet loss), before any repair; also for comparing two clients, establishing a baseline, or collecting an incident bundle. Reports evidence, confidence, and blind spots instead of claiming a complete physical route. 典型中文请求：先查一下问题出在哪、扫描一下我的 VPS 和本机、两台电脑表现不一样、先存一份正常基线。"
 ---
 
 # NetOps Scan
@@ -21,7 +21,7 @@ This Skill is strictly read-only. Authorized SSH here is for scanning only; hand
 - `server`: local Linux server or authorized SSH target; resources, listeners, services, routing, firewall summaries, congestion control, and 3x-ui/Xray presence.
 - `node`: protocol-matched DNS/TCP/TLS/HTTP checks to a declared endpoint, optionally through a local HTTP/SOCKS proxy.
 - `compare`: compare two versioned bundles only when targets, protocol, and time window are compatible.
-- `monitor evidence`: inspect existing bounded samples and incident bundles. Installing, changing, or removing a scheduled monitor belongs to `netops-manage`.
+- `monitor evidence`: inspect existing bounded samples and incident bundles. Read `<reference-root>/monitoring.md` before interpreting existing samples, so you know what a sample does and does not retain and what its privacy boundary is. Installing, changing, or removing a scheduled monitor belongs to `netops-manage`.
 - `curated tools`: attach one maintained specialist tool to a client, local-server, or node scan when built-in probes cannot answer the next question.
 - `control channel`: record proxy environment, system-proxy/TUN clues, the proposed change surface, and whether Codex dependency is confirmed, unknown, or independent.
 

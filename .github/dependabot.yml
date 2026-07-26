@@ -1,0 +1,20 @@
+# NetOps has no runtime dependencies. netops_core/ and scripts/ use the Python
+# standard library only, and pyproject.toml declares dependencies = []. There is
+# deliberately no pip ecosystem entry here: adding one would imply a dependency
+# surface that does not exist. The build, setuptools and jsonschema pins used by CI
+# are checking and packaging tools, and they are updated by hand together with the
+# release contract asserted in scripts/release_check.py.
+#
+# Actions in .github/workflows/test.yml are pinned by commit SHA, and
+# scripts/release_check.py asserts those exact SHAs. An action update therefore has
+# to change both files in the same pull request, or the release integrity check
+# fails. Review these updates by hand; do not merge them blind.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci

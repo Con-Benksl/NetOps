@@ -1,0 +1,101 @@
+name: Feature request
+description: Suggest a capability, a check, a reference document or a report improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you write, two constraints that shape almost every answer here:
+
+        - **NetOps has exactly one root router Skill and five workflow Skills, and
+          that number does not grow.** A new protocol, provider, carrier, region or
+          failure mode becomes a document in `references/` and a routing case in an
+          existing workflow, never a sixth Skill.
+        - **The core is standard library only.** `netops_core/` and `scripts/` import
+          nothing outside the Python standard library, so a proposal that needs a new
+          runtime dependency will be declined even if the idea is good.
+
+        See [CONTRIBUTING.md](https://github.com/Con-Benksl/NetOps/blob/main/CONTRIBUTING.md)
+        for the full rule set.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve
+      description: Describe the situation you were in, not the solution you have in mind. What did you want to find out or change, and where did NetOps leave you stuck?
+      placeholder: |
+        I was trying to ...
+        NetOps told me ... but I still could not ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: workflow
+    attributes:
+      label: Which workflow would own this
+      description: Pick the existing workflow this belongs in. If your answer is "a new Skill", pick the closest one and explain in the next box why an existing workflow cannot carry it.
+      options:
+        - netops-start (onboarding and explanations)
+        - netops-scan (read only scanning)
+        - netops-build (audit, plan and apply changes)
+        - netops-fix (diagnose a failure)
+        - netops-manage (long term operations and fleet)
+        - netops root router (routing or first response)
+        - references/ documentation only
+        - netops_core or the netopsctl command line
+        - Schemas or contracts
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like NetOps to do
+      description: The behaviour you want, as concretely as you can put it. If it produces output, sketch what the Chinese beginner report and the JSON should say.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Does this touch anything that can change or disconnect a machine
+      description: Read only additions are much easier to accept. Anything that writes to a host, restarts a service, or widens what leaves the operator's machine needs a backup, a rollback and a much closer review.
+      options:
+        - No, read only or documentation only
+        - It changes what is exported or reported, so it touches redaction
+        - It writes to a remote host or restarts a service
+        - It touches the control channel gate
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered instead
+      description: Existing NetOps commands, other tools, or a manual procedure. If something already almost works, say what it is missing.
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Links to protocol documentation, upstream issues, or an example of the output you have in mind, with real identifiers removed.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This does not require adding a sixth Skill, and it does not require a new runtime dependency.
+          required: true
+        - label: I removed real addresses, host names, node share links and credentials from this report.
+          required: true

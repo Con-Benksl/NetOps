@@ -3256,6 +3256,7 @@ def apply_plan(
     confirmed_plan_id: str,
     current_control_channel: dict[str, Any],
     receipt_path: str | Path | None = None,
+    accept_residual_risk: bool = False,
 ) -> dict[str, Any]:
     if authorized is not True:
         raise PermissionError(CHANGE_AUTHORIZATION_REQUIRED)
@@ -3285,9 +3286,19 @@ def apply_plan(
     if not guard["execution_available"]:
         raise PermissionError("remote change execution is unavailable")
     if not guard["can_apply"]:
-        raise PermissionError(
-            "control-channel guard blocked apply: " + " ".join(guard["reasons"])
-        )
+        if not guard["can_apply_with_acknowledgment"]:
+            raise PermissionError(
+                "the remote executor cannot perform this change: "
+                + " ".join(guard["reasons"])
+            )
+        if accept_residual_risk is not True:
+            raise PermissionError(
+                "control-channel guard requires informed consent before apply: "
+                + " ".join(guard["reasons"])
+                + " Show the user the residual risks and the recovery path, then "
+                "retry with --accept-residual-risk only after the user "
+                "explicitly accepts them."
+            )
     host = get_host(fleet, plan["host_alias"])
     _assert_host_unchanged(plan, host)
     destination = resolve_apply_receipt_path(plan_path, receipt_path)
@@ -3305,6 +3316,9 @@ def apply_plan(
         "current_control_channel": access_evidence,
         "receipt_path": str(destination),
     }
+    if not guard["can_apply"]:
+        receipt["residual_risk_acknowledged"] = True
+        receipt["acknowledged_risks"] = list(guard["reasons"])
     execution_id = uuid.uuid4().hex[:12]
     receipt["execution_id"] = execution_id
 
@@ -3529,6 +3543,7 @@ def rollback_plan(
     apply_receipt_path: str | Path,
     current_control_channel: dict[str, Any],
     receipt_path: str | Path | None = None,
+    accept_residual_risk: bool = False,
 ) -> dict[str, Any]:
     if authorized is not True:
         raise PermissionError(CHANGE_AUTHORIZATION_REQUIRED)
@@ -3580,11 +3595,23 @@ def rollback_plan(
             receipt["status"] = "blocked"
             raise PermissionError("remote change rollback is unavailable")
         if not guard["can_apply"]:
-            receipt["status"] = "blocked"
-            raise PermissionError(
-                "control-channel guard blocked rollback: "
-                + " ".join(guard["reasons"])
-            )
+            if not guard["can_apply_with_acknowledgment"]:
+                receipt["status"] = "blocked"
+                raise PermissionError(
+                    "the remote executor cannot perform this rollback: "
+                    + " ".join(guard["reasons"])
+                )
+            if accept_residual_risk is not True:
+                receipt["status"] = "consent-required"
+                raise PermissionError(
+                    "control-channel guard requires informed consent before "
+                    "rollback: " + " ".join(guard["reasons"])
+                    + " Show the user the residual risks and the recovery path, "
+                    "then retry with --accept-residual-risk only after the user "
+                    "explicitly accepts them."
+                )
+            receipt["residual_risk_acknowledged"] = True
+            receipt["acknowledged_risks"] = list(guard["reasons"])
         host = get_host(fleet, plan["host_alias"])
         _assert_host_unchanged(plan, host)
         if (
@@ -3636,7 +3663,7 @@ def rollback_plan(
                 receipt["active_change_lease_error"] = _safe_remote_output(
                     lease_exc
                 )
-        if receipt["status"] != "blocked":
+        if receipt["status"] not in {"blocked", "consent-required"}:
             receipt["status"] = (
                 "rollback-pending"
                 if automatic_timer_uncertain
