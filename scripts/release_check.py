@@ -167,7 +167,7 @@ def _check_ci_contract(root: Path) -> list[str]:
     errors: list[str] = []
     required_fragments = (
         "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
-        "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+        "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
         '"setuptools==83.0.0"',
         '"build==1.3.0"',
         '"jsonschema==4.25.1"',
