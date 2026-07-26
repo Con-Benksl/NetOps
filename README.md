@@ -35,7 +35,7 @@ Before any action that can restart a proxy, take over TUN, or change DNS, routes
 
 1. **Risk resolved** (`decision: allow`). The target is proven independent of the agent's current path, or a complete automatic rollback contract covers every declared target. Proceed under normal authorisation: show impact, backup, verification, and rollback, then get an explicit yes.
 2. **Risk unresolved on a remote target** (`decision: warn`, `can_apply_with_acknowledgment: true`). The gate does not refuse. It presents a risk card: what breaks, the recovery path, the residual risks, and the safer alternatives. The change proceeds only after the user explicitly accepts the residual risk for that specific operation, via `--accept-residual-risk`, and the accepted risks are written into the receipt as `acknowledged_risks`.
-3. **Local control plane** (`execution_mode: manual-local-control-plane`, `can_apply_with_acknowledgment: false`). Switching local TUN, the system proxy, an active proxy process, DNS, routes, or the firewall stays outside the remote executor no matter what the user consents to, because consent cannot keep a socket open. The user performs that one switch; the agent confirms it is still online and then continues the remote work itself.
+3. **Local control plane** (`execution_mode: manual-local-control-plane`, `can_apply_with_acknowledgment: false`). Switching local TUN, the system proxy, an active proxy process, DNS, routes, or the firewall stays outside the remote executor no matter what the user consents to, because consent cannot keep a socket open. By default the user performs that one switch. If the user explicitly asks the agent to perform it and accepts the disconnection risk after seeing the recovery card, the agent may execute it locally, one action at a time; either way the agent confirms it is still online and then continues the remote work itself.
 
 Consent is per operation and is recorded. It is not a mode you can leave switched on.
 
@@ -182,7 +182,7 @@ Once installed, every example below also works with the bare `netopsctl` entry p
 | --- | --- |
 | `direct-ssh-or-plan` | The target is proven off the agent's path; direct SSH or the exact plan executor may proceed after authorisation |
 | `exact-plan` | A shared path with a complete rollback contract; only the exact plan executor, with the timer armed before the first write |
-| `manual-local-control-plane` | Touches the local TUN, system proxy, DNS, routes, or firewall; the user performs that switch, consent cannot delegate it |
+| `manual-local-control-plane` | Touches the local TUN, system proxy, DNS, routes, or firewall; consent cannot hand it to the remote executor. The user performs the switch by default, or the agent does it locally one action at a time on explicit request |
 | `read-only` | Path facts are still missing; establish them before changing anything |
 
 ## What it inspects
@@ -306,7 +306,7 @@ python3 scripts/check_install_tree.py .
 python3 scripts/release_check.py .
 ```
 
-That suite is 412 tests as of 0.4.0, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
+That suite is 414 tests as of 0.4.0, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
 
 Release artefacts must clear a double build gate. Install the pinned build tooling, then pass an explicit Unix timestamp and an output directory that does not yet exist:
 
