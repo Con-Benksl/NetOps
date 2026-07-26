@@ -105,6 +105,9 @@ to evaluate it.
 
 ## [0.3.2] - 2026-07-26
 
+0.3.2 was never tagged on its own: it shipped inside the v0.4.0 release
+commit, so its link points at the pull request that carried it.
+
 The control channel gate now reminds instead of refusing. A gate that returns
 a dead end teaches the operator to work around it; a gate that states the
 residual risk and records consent keeps the decision visible.
@@ -198,6 +201,6 @@ together.
   produced and reviewed, but nothing applied them.
 
 [Unreleased]: https://github.com/Con-Benksl/NetOps/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/Con-Benksl/NetOps/compare/v0.3.2...v0.4.0
-[0.3.2]: https://github.com/Con-Benksl/NetOps/compare/v0.3.1...v0.3.2
+[0.4.0]: https://github.com/Con-Benksl/NetOps/compare/v0.3.1...v0.4.0
+[0.3.2]: https://github.com/Con-Benksl/NetOps/pull/2
 [0.3.1]: https://github.com/Con-Benksl/NetOps/releases/tag/v0.3.1
