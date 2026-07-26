@@ -25,7 +25,7 @@ Follow `<reference-root>/guided-dialogue.md`. If the long-term goal is broad, of
 
 For monitoring review location, offer `VPS 计划（推荐）`, `当前电脑计划`, or `两端分别审查`, and explain the different observation points. Generate review material only with `--dry-run`; do not claim that either side is installed or active.
 
-For an executable remote maintenance change, show the execution confirmation card from `<reference-root>/guided-dialogue.md` and wait for authorization of the exact operation. Codex then executes the remote SSH transaction; an exact plan ID is additionally required only when the plan executor is selected. A general request such as “standardize these servers” is not authorization for every host or operation.
+For an executable remote maintenance change, show the execution confirmation card from `<reference-root>/guided-dialogue.md` and wait for authorization of the exact operation. The agent then executes the remote SSH transaction; an exact plan ID is additionally required only when the plan executor is selected. A general request such as “standardize these servers” is not authorization for every host or operation.
 
 ## Operating Rhythm
 

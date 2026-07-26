@@ -13,7 +13,7 @@ Before reading a shared reference, resolve `<reference-root>` once. Use `../../r
 
 ## Workflow Boundary
 
-This onboarding workflow does not mutate systems itself. Route build, repair, and maintenance requests to the matching workflow. An unrelated remote VPS may be changed by Codex through authorized direct SSH with backup and rollback; local or shared control-path changes require the stronger control-channel gate and, when needed, an exact plan.
+This onboarding workflow does not mutate systems itself. Route build, repair, and maintenance requests to the matching workflow. An unrelated remote VPS may be changed by the agent through authorized direct SSH with backup and rollback; local or shared control-path changes require the stronger control-channel gate and, when needed, an exact plan.
 
 ## Guided Choices
 
@@ -34,7 +34,7 @@ If the user asks for more or less explanation, offer `边做边解释（推荐�
 5. Summarize the topology in the form `client -> access network -> VPS inbound -> routing -> outbound -> destination`.
 6. Hand off to one next workflow and explain why.
 
-Before routing into any network change, explain that Codex may depend on the same proxy path being repaired and apply `<reference-root>/control-channel-safety.md`. A beginner must understand which path will stay available, how the change is undone, and how to restore Codex access if it disconnects.
+Before routing into any network change, explain that the agent may depend on the same proxy path being repaired and apply `<reference-root>/control-channel-safety.md`. A beginner must understand which path will stay available, how the change is undone, and how to restore the agent's access if it disconnects.
 
 ## Beginner Boundaries
 

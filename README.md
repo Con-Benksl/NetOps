@@ -9,7 +9,7 @@
 
 When a proxy or VPS breaks, the hard part is almost never the missing command. It is not knowing **which segment** is broken: your laptop, your local network, the VPS inbound, the proxy routing, the upstream exit, or the destination itself. NetOps finds the segment before it touches anything.
 
-It ships as a set of Agent Skills for Codex and Claude Code, plus a diagnostic CLI that uses only the Python standard library. You can describe a symptom in plain language, or run the scans yourself.
+It ships as a set of Agent Skills for any coding or operations agent, Claude Code and Codex among them, plus a diagnostic CLI that uses only the Python standard library. You can describe a symptom in plain language, or run the scans yourself.
 
 The working order is fixed: **scan first, conclude second; protect the agent's own network path before changing the network.**
 
@@ -46,12 +46,12 @@ Two consequences worth stating plainly. A "backup node" inside the same proxy ap
 No packages to install, no dependencies to resolve. Clone at the reviewed tag and run a bounded read only scan of the machine you are sitting at.
 
 ```bash
-git clone --branch v0.4.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.5.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 cd NetOps
 python3 scripts/netopsctl.py scan client --output client.json
 ```
 
-Requires Python 3.10 to 3.14. If the `v0.4.0` tag does not exist, that clone is meant to fail; do not fall back to `main` or to a floating version.
+Requires Python 3.10 to 3.14. If the `v0.5.0` tag does not exist, that clone is meant to fail; do not fall back to `main` or to a floating version.
 
 Optionally install it as a command:
 
@@ -65,10 +65,12 @@ netopsctl --help
 Requires Node.js 22.20.0 or newer. Install from an exact reviewed release tag. Never hand a floating branch or a `latest` pipeline to a shell; both the installer version and the NetOps tag below are pinned. The installer may go non interactive inside an agent environment, so list first and confirm that exactly `netops` and its five sub Skills are discovered, then install as a separate step.
 
 ```bash
-git clone --branch v0.4.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.5.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -l --full-depth
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
 ```
+
+For Claude Code, replace `--agent codex` with `--agent claude-code`; to install into every agent the CLI recognises on the machine, use `--agent '*'`. The Skill content itself is agent neutral: throughout these documents, "the agent" means whichever AI assistant is operating for you.
 
 After that, describe the situation. The router picks one workflow and asks at most three questions per turn, two or three explained options each, recommended option first, and never asks you to guess something a read only scan can discover.
 
@@ -306,7 +308,7 @@ python3 scripts/check_install_tree.py .
 python3 scripts/release_check.py .
 ```
 
-That suite is 414 tests as of 0.4.0, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
+That suite is 414 tests as of 0.5.0, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
 
 Release artefacts must clear a double build gate. Install the pinned build tooling, then pass an explicit Unix timestamp and an output directory that does not yet exist:
 

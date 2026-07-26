@@ -267,7 +267,7 @@ class ModelsAndReportTests(unittest.TestCase):
             }
         }
         report = render_report(bundle.finish())
-        self.assertIn("Codex 控制通道：依赖关系未确认", report)
+        self.assertIn("Agent 控制通道：依赖关系未确认", report)
         self.assertIn("TUN 已检测到", report)
 
 

@@ -24,7 +24,7 @@ SEGMENT_LABELS = {
     "public-egress": "公网出口",
     "destination": "目标服务",
     "comparison": "双端对比",
-    "control-channel": "Codex 控制通道",
+    "control-channel": "Agent 控制通道",
 }
 
 STATUS_LABELS = {
@@ -202,7 +202,7 @@ def _environment_lines(bundle: DiagnosticBundle) -> list[str]:
             proxy_environment = {}
         proxy_env = proxy_environment.get("set_variables", {})
         lines.append(
-            "- Codex 控制通道：依赖关系未确认；TUN "
+            "- Agent 控制通道：依赖关系未确认；TUN "
             + ("已检测到" if control_channel.get("tun_detected") else "未确认")
             + "；系统代理 "
             + (

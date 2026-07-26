@@ -28,7 +28,7 @@
 
 ## 3. 受控切换测试
 
-唯一能正向证明独立的一步。切换动作属于本机控制面，默认由用户手动完成（见 `control-channel-safety.md` 三条硬规则第 1 条），Codex 只负责测量。
+唯一能正向证明独立的一步。切换动作属于本机控制面，默认由用户手动完成（见 `control-channel-safety.md` 三条硬规则第 1 条），Agent 只负责测量。
 
 1. 切换前：`netopsctl scan client --external --output before.json`，记下该 `public-egress` 观察的 `observation_id`。
 2. 用户在代理应用里切到一个明确不使用目标 VPS 的节点，或直接关闭代理与 TUN。撤销方式：切回原节点。
@@ -38,7 +38,7 @@
 
 - 出口改变：切换前的出口可归因于原节点，原路径为 `shared`。这不代表新路径干净，新节点仍可能链式经过目标机。只有切换后的出口不落在目标地址集合内，且用切换后的生效节点重跑第 2 步同样未命中，才可把当前路径判定为 `independent`。
 - 出口不变：可能是目标本来就没承载流量，也可能两个节点共用同一落地。除非第 2 步同向未命中，否则仍是 `unknown`。
-- 切换过程中 Codex 断线：这是最强的依赖证据，直接判定 `shared`，并按紧急避险卡先恢复控制通道。
+- 切换过程中 Agent 断线：这是最强的依赖证据，直接判定 `shared`，并按紧急避险卡先恢复控制通道。
 - 两个 `observation_id` 写进诊断包与最终回执。`netopsctl safety assess --evidence` 只写结论句，不要粘贴 UUID：连字符形式的 UUID 会被脱敏规则拦下，报错为 evidence 必须是非秘密审计说明。
 
 ## 4. 用户确认

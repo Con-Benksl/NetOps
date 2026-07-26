@@ -315,7 +315,7 @@ def emergency_steps(platform_name: str = "unknown") -> list[str]:
         "先关闭测试中的 TUN 或系统代理；不要先卸载代理软件。",
         "切换到与故障路径无关的网络，例如手机热点或另一条已验证线路。",
         "只启动最后一次确认可用的代理配置，确认普通 HTTPS 可以访问。",
-        "重新启动 Codex，并说明刚才执行到哪一步、变更摘要或计划 ID 和备份位置。",
+        "重新启动 Agent，并说明刚才执行到哪一步、变更摘要或计划 ID 和备份位置。",
     ]
     if platform_name == "macos":
         steps.insert(
@@ -361,7 +361,7 @@ def assess_control_channel(
             + ", ".join(local_surfaces)
         )
     elif control["dependency"] == "unknown":
-        reasons.append("尚未确认 Codex 联网是否依赖本次要修改的组件。")
+        reasons.append("尚未确认 Agent 联网是否依赖本次要修改的组件。")
     elif not control["evidence"]:
         reasons.append("尚未提供控制通道依赖与恢复条件的可审核证据。")
     elif not control["operator_recovery_reviewed"]:
@@ -369,13 +369,13 @@ def assess_control_channel(
     elif require_independent_path and control["dependency"] != "independent":
         reasons.append(
             "手动远端回滚不能依赖正在恢复的共享路径；"
-            "请先用 target_independence_verified 证明目标不在当前 Codex 路径上，"
+            "请先用 target_independence_verified 证明目标不在当前 Agent 路径上，"
             "或等待已武装的自动回滚完成。"
         )
     elif control["dependency"] == "independent":
         if not control["target_independence_verified"]:
             reasons.append(
-                "尚未提供目标不在当前 Codex 路径上的实测证据；"
+                "尚未提供目标不在当前 Agent 路径上的实测证据；"
                 "target_independence_verified 仍为 false。"
             )
         elif control["continuity_strategy"] != "independent-path":
@@ -388,7 +388,7 @@ def assess_control_channel(
             risk = "guarded"
             execution_mode = "direct-ssh-or-plan"
             reasons.append(
-                "已验证目标不在当前 Codex 路径上；可直接 SSH 或使用精确计划执行器。"
+                "已验证目标不在当前 Agent 路径上；可直接 SSH 或使用精确计划执行器。"
             )
     elif control["continuity_strategy"] == "automatic-rollback":
         if control["host_reboot_planned"]:
@@ -451,14 +451,14 @@ def assess_control_channel(
             )
     else:
         reasons.append(
-            "仅靠人工恢复不能保证 Codex 断线后继续；请改用已验证独立通道，"
+            "仅靠人工恢复不能保证 Agent 断线后继续；请改用已验证独立通道，"
             "或为远程目标提供完整的自动回滚合同。"
         )
 
     if execution_mode == "direct-ssh-or-plan":
         next_action = (
             "审核条件满足；展示目标主机、精确 SSH 操作、影响、备份、验证与回滚，"
-            "获得明确授权后由 Codex 执行。只有选择精确计划执行器时才要求计划 ID。"
+            "获得明确授权后由 Agent 执行。只有选择精确计划执行器时才要求计划 ID。"
         )
     elif execution_mode == "exact-plan":
         next_action = (
@@ -467,8 +467,8 @@ def assess_control_channel(
         )
     elif execution_mode == "manual-local-control-plane":
         next_action = (
-            "只让用户手动完成一个本机控制面动作；确认 Codex 仍在线后，"
-            "远端 Linux 命令继续由 Codex 执行。"
+            "只让用户手动完成一个本机控制面动作；确认 Agent 仍在线后，"
+            "远端 Linux 命令继续由 Agent 执行。"
         )
     elif control["dependency"] == "shared":
         next_action = (
@@ -478,7 +478,7 @@ def assess_control_channel(
         )
     else:
         next_action = (
-            "先扫描或由用户确认 Codex 当前经过的代理、TUN、节点和 VPS；"
+            "先扫描或由用户确认 Agent 当前经过的代理、TUN、节点和 VPS；"
             "控制通道未知时默认停在计划阶段。用户明确接受未知风险时，"
             "按共享路径的最高风险对待并展示恢复路径后继续。"
         )

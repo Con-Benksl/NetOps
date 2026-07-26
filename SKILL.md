@@ -20,10 +20,10 @@ NetOps is the single public entry point for beginner VPS networking and proxy op
 Follow `references/guided-dialogue.md` for every workflow.
 
 - Ask only when the answer changes the next action. Do not ask the user to choose facts that a read-only scan can discover.
-- Use `request_user_input` or another structured question tool when available so choices are clickable. Otherwise show a short numbered list in Chinese.
+- Use a structured question tool when available so choices are clickable: `request_user_input` in Codex, `AskUserQuestion` in Claude Code, or the equivalent in the agent you run in. Otherwise show a short numbered list in Chinese.
 - Ask at most three questions per turn, with 2–3 mutually exclusive choices per question. Put the recommended choice first and explain the impact of every option.
 - When the request is already clear, route or act without forcing the user through a menu.
-- A menu choice can select `read-only scan`, `plan only`, or `review and execute`. Execution still requires one final confirmation of the exact remote operation after impact and rollback details are shown; the user is not asked to copy remote Linux commands that Codex can run safely over SSH.
+- A menu choice can select `read-only scan`, `plan only`, or `review and execute`. Execution still requires one final confirmation of the exact remote operation after impact and rollback details are shown; the user is not asked to copy remote Linux commands that the agent can run safely over SSH.
 
 For an ambiguous request such as “帮我看看这台 VPS”, offer a context-appropriate version of:
 
@@ -35,14 +35,14 @@ After the user chooses, acknowledge the choice and its boundary in one sentence,
 
 ## Control-Channel Gate
 
-Before any action that can restart a proxy, take over TUN, or change DNS, routes, firewall rules, a node, or a VPS carrying Codex traffic, follow `references/control-channel-safety.md`.
+Before any action that can restart a proxy, take over TUN, or change DNS, routes, firewall rules, a node, or a VPS carrying the agent's traffic, follow `references/control-channel-safety.md`.
 
-1. Determine whether the change touches the local Mac control plane, the node/VPS currently carrying Codex traffic, or an unrelated remote VPS. Scanner clues do not prove the dependency by themselves; work down the evidence ladder in `references/independence-protocol.md`, which also states what a user's verbal confirmation can and cannot establish.
-2. For an unrelated remote VPS with no local-network change, allow authorized direct SSH execution. Codex performs the backup, Linux commands, validation, verification, and rollback; do not hand those commands to the user merely because they are writes.
-3. If a remote target may carry Codex traffic, resolve the dependency first. A shared path is protected by a verified independent path or an automatic rollback contract. When neither exists, do not refuse: show the risk card (impact, recovery path, residual risks, safer alternatives), and proceed only after the user explicitly accepts the residual risk for this specific operation. Record the accepted risks in the receipt.
-4. Local TUN, system proxy, active proxy process, DNS, route, or firewall switching that could cut off Codex is a manual user action by default. Guide that local switch one step at a time. If the user explicitly asks Codex to perform the switch and accepts the disconnection risk after seeing the recovery card, execute it one action at a time, then continue the remote work automatically.
+1. Determine whether the change touches the local Mac control plane, the node/VPS currently carrying the agent's traffic, or an unrelated remote VPS. Scanner clues do not prove the dependency by themselves; work down the evidence ladder in `references/independence-protocol.md`, which also states what a user's verbal confirmation can and cannot establish.
+2. For an unrelated remote VPS with no local-network change, allow authorized direct SSH execution. The agent performs the backup, Linux commands, validation, verification, and rollback; do not hand those commands to the user merely because they are writes.
+3. If a remote target may carry the agent's traffic, resolve the dependency first. A shared path is protected by a verified independent path or an automatic rollback contract. When neither exists, do not refuse: show the risk card (impact, recovery path, residual risks, safer alternatives), and proceed only after the user explicitly accepts the residual risk for this specific operation. Record the accepted risks in the receipt.
+4. Local TUN, system proxy, active proxy process, DNS, route, or firewall switching that could cut off the agent is a manual user action by default. Guide that local switch one step at a time. If the user explicitly asks the agent to perform the switch and accepts the disconnection risk after seeing the recovery card, execute it one action at a time, then continue the remote work automatically.
 5. Before any authorized remote write, show affected components, unchanged invariants, expected interruption, failure consequences, backup, rollback, and verification. Use a plan ID when the exact-plan executor is used; otherwise confirm the exact SSH transaction summary.
-6. If connectivity is lost, prioritize the emergency steps that restore a known-good path and restart Codex before continuing diagnosis.
+6. If connectivity is lost, prioritize the emergency steps that restore a known-good path and restart the agent before continuing diagnosis.
 
 ## Route To One Workflow
 
@@ -63,10 +63,10 @@ If one request spans workflows, select the workflow that produces the next neces
 - A traceroute, ASN lookup, or public-IP service is evidence from one vantage point, not a complete physical route.
 - Curated external tools are optional adapters, not trusted conclusions. Inspect `netopsctl tools status`, explain what data leaves the device, and obtain separate consent for external queries and load tests.
 - Never download or run an unpinned `latest` script through a shell pipeline. Prefer an installed package or a reviewed official release and record its version or commit.
-- Authorized direct SSH is allowed for an unrelated remote VPS when the operation does not change the local control plane or a remote path carrying Codex traffic. Back up affected state, validate before apply, verify new and preserved behavior, roll back on failure, and keep a concise receipt of commands and results.
+- Authorized direct SSH is allowed for an unrelated remote VPS when the operation does not change the local control plane or a remote path carrying the agent's traffic. Back up affected state, validate before apply, verify new and preserved behavior, roll back on failure, and keep a concise receipt of commands and results.
 - Use the exact-plan executor when its file-transaction contract fits the change or when a shared remote path needs automatic rollback. It is a safety tool, not a blanket ban on direct SSH.
 - Scheduled monitor installation/removal is unreleased in this version. Only dry-run review material and owned-file integrity status are available; do not copy scheduler commands from a preview.
-- Never restart or rewrite the active Codex network path silently. A `warn` decision from the control-channel gate is a reminder, not a refusal: present the residual risks and the recovery path, and proceed only with the user's explicit per-operation informed consent (`--accept-residual-risk` for the exact-plan executor). Hard refusals are reserved for devices the user does not own and features this version has not released.
+- Never restart or rewrite the agent's active network path silently. A `warn` decision from the control-channel gate is a reminder, not a refusal: present the residual risks and the recovery path, and proceed only with the user's explicit per-operation informed consent (`--accept-residual-risk` for the exact-plan executor). Hard refusals are reserved for devices the user does not own and features this version has not released.
 - A purchased "IP" may be an authenticated SOCKS/HTTP upstream rather than an address assigned to the VPS. Classify it before changing routing.
 - Preserve existing nodes and the host default route unless the user explicitly requests otherwise.
 
@@ -78,13 +78,13 @@ If one request spans workflows, select the workflow that produces the next neces
 - What can and cannot be observed: `references/observable-path.md`
 - Evidence and source policy: `references/source-policy.md`
 - Curated tool selection, permissions, and compatibility: `references/curated-tools.md`
-- Codex control-channel safety and the change gate: `references/control-channel-safety.md`
+- Agent control-channel safety and the change gate: `references/control-channel-safety.md`
 - After an incident, emergency recovery and the offline recovery card: `references/emergency-recovery.md`
-- Proving a target is off the current Codex path: `references/independence-protocol.md`
+- Proving a target is off the agent's current path: `references/independence-protocol.md`
 - Bounded monitoring data layout and privacy boundary: `references/monitoring.md`
 - Run the helper without assuming the current directory: use an installed `netopsctl`, or resolve this Skill directory and run `python3 <skill-root>/scripts/netopsctl.py --help`.
 
-The helper is a data collector and controlled-change executor. Codex may also perform authorized direct SSH transactions under the same backup and verification rules; neither path replaces judgment, authorization, or end-to-end verification.
+The helper is a data collector and controlled-change executor. The agent may also perform authorized direct SSH transactions under the same backup and verification rules; neither path replaces judgment, authorization, or end-to-end verification.
 
 ## Navigating This Directory
 

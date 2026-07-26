@@ -21,7 +21,7 @@ Normative safety text has exactly one home. Restating it elsewhere is how the 0.
 | --- | --- |
 | Control-channel gate, dependency graph, direct SSH transaction, informed-consent ladder | `references/control-channel-safety.md` |
 | Post-incident recovery, emergency card, offline recovery card | `references/emergency-recovery.md` |
-| Proving a target is off the current Codex path | `references/independence-protocol.md` |
+| Proving a target is off the agent's current path | `references/independence-protocol.md` |
 | Question format, menus, execution confirmation card | `references/guided-dialogue.md` |
 | Curated tool selection, permissions, compatibility | `references/curated-tools.md` |
 
