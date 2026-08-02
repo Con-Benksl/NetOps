@@ -16,6 +16,34 @@ this work is reconciled with the published repository.
 
 Nothing yet.
 
+## [0.5.1] - 2026-08-02
+
+This maintenance release completes a whole-project pre-publication audit and
+adds the direct community link required for sharing NetOps on LINUX DO. It does
+not change the diagnostic, fleet, change-plan, or support-bundle schemas.
+
+### Changed
+
+- Both READMEs now link directly to [LINUX DO](https://linux.do), and the
+  bilingual documentation contract keeps that public link from drifting out
+  of future releases.
+- All pinned clone examples and package metadata now target `v0.5.1`.
+
+### Fixed
+
+- Removed four stale imports found by the final static review. They had no
+  runtime effect, but obscured the released monitor and redaction boundaries.
+- Documented four narrowly scoped Bandit false positives at their source: the
+  `/tmp` literals are policy or macOS alias comparisons, and sdist members are
+  fully validated before the Python 3.10/3.11 extraction fallback runs.
+
+### Verified
+
+- The complete 414-test suite passes in normal and optimized (`python -O`)
+  modes. Release integrity, secret scanning, install-tree validation, strict
+  JSON Schema validation, reproducible builds, and fresh wheel/sdist installs
+  remain release gates.
+
 ## [0.5.0] - 2026-07-26
 
 The suite is agent neutral. It was written with Codex as the operator and
@@ -231,7 +259,8 @@ together.
 - Remote change execution was unreleased in this version. Plans could be
   produced and reviewed, but nothing applied them.
 
-[Unreleased]: https://github.com/Con-Benksl/NetOps/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Con-Benksl/NetOps/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Con-Benksl/NetOps/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Con-Benksl/NetOps/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Con-Benksl/NetOps/compare/v0.3.1...v0.4.0
 [0.3.2]: https://github.com/Con-Benksl/NetOps/pull/2

@@ -18,7 +18,6 @@ from typing import Any
 from .models import (
     DiagnosticBundle,
     Observation,
-    utc_now,
     validate_bundle_data,
     write_bundle,
     write_json_atomic,
@@ -28,12 +27,13 @@ from .scanner import (
     scan_client,
     scan_node,
     scan_server_local,
-    trace_target,
 )
 from .util import (
     parse_json_strict,
     platform_id,
-    run_command,
+    # Release gates patch this name to prove the disabled scheduler path
+    # remains fail-closed without reaching the process runner.
+    run_command,  # noqa: F401
     trusted_system_environment,
 )
 
@@ -73,6 +73,9 @@ SCHEDULED_MONITOR_MUTATION_AVAILABLE = False
 SCHEDULED_MONITOR_MUTATION_UNAVAILABLE = (
     "scheduled monitor mutation is unavailable in this release"
 )
+# macOS exposes these root-owned system paths through canonical aliases.
+_MACOS_TEMP_ALIAS = "/tmp"  # nosec B108
+_TRUSTED_MACOS_SYSTEM_ALIASES = {"/etc", _MACOS_TEMP_ALIAS, "/var"}
 
 
 def _run_scheduler_command(
@@ -118,7 +121,7 @@ def _assert_real_directory(
         raise ValueError(f"monitor directory is unavailable: {path}") from exc
     trusted_macos_alias = (
         sys.platform == "darwin"
-        and str(path) in {"/etc", "/tmp", "/var"}
+        and str(path) in _TRUSTED_MACOS_SYSTEM_ALIASES
         and path.is_symlink()
     )
     if trusted_macos_alias:
@@ -768,7 +771,7 @@ def _validate_user_controlled_directory_chain(
         info = item.lstat()
         trusted_macos_alias = (
             sys.platform == "darwin"
-            and str(item) in {"/etc", "/tmp", "/var"}
+            and str(item) in _TRUSTED_MACOS_SYSTEM_ALIASES
             and item.is_symlink()
         )
         if trusted_macos_alias:

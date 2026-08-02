@@ -12,7 +12,6 @@ from unittest.mock import patch
 from netops_core.monitor import (
     STATE_MANIFEST_NAME,
     STATE_MARKER_CONTENT,
-    STATE_MARKER_INSTALLING_CONTENT,
     STATE_MARKER_NAME,
     STATE_MARKER_REMOVED_CONTENT,
     _acquire_lock,

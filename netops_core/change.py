@@ -95,9 +95,22 @@ PLAN_SSH_KEYS = {
 PSEUDO_FILESYSTEM_ROOTS = tuple(
     PurePosixPath(path) for path in ("/proc", "/sys", "/dev", "/run")
 )
+# This is a backup-policy value; no temporary file is created here.
+_POSIX_TEMP_ROOT = "/tmp"  # nosec B108
 OVERBROAD_BACKUP_PATHS = {
     PurePosixPath(path)
-    for path in ("/", "/boot", "/etc", "/home", "/opt", "/root", "/srv", "/tmp", "/usr", "/var")
+    for path in (
+        "/",
+        "/boot",
+        "/etc",
+        "/home",
+        "/opt",
+        "/root",
+        "/srv",
+        _POSIX_TEMP_ROOT,
+        "/usr",
+        "/var",
+    )
 }
 
 _REMOTE_METADATA_PROGRAM = r"""

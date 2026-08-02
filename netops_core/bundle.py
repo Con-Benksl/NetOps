@@ -18,7 +18,7 @@ from urllib.parse import unquote_plus, urlsplit
 
 from . import BUNDLE_SCHEMA_VERSION
 from .models import DiagnosticBundle, load_bundle, utc_now, validate_bundle_data
-from .redaction import PUBLIC_MAPPING_KEYS, PUBLIC_VANTAGE_POINTS, Redactor
+from .redaction import PUBLIC_VANTAGE_POINTS, Redactor
 from .report import render_report
 from .util import open_regular_binary, parse_json_strict
 

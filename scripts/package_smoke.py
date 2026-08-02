@@ -169,7 +169,12 @@ def _safe_extract_sdist(artifact: Path, destination: Path) -> Path:
         if sys.version_info >= (3, 12):
             archive.extractall(destination, members=members, filter="data")
         else:
-            archive.extractall(destination, members=members)
+            # Python 3.10/3.11 lack filters; every member passed the strict
+            # path, type, size, mode, and single-root validation above.
+            archive.extractall(  # nosec B202
+                destination,
+                members=members,
+            )
     extracted_root = destination / top_level
     try:
         root_info = extracted_root.lstat()

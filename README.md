@@ -2,6 +2,8 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
+Open-source community: [LINUX DO](https://linux.do)
+
 [![test](https://github.com/Con-Benksl/NetOps/actions/workflows/test.yml/badge.svg)](https://github.com/Con-Benksl/NetOps/actions/workflows/test.yml)
 [![licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.10%20to%203.14-blue.svg)](https://www.python.org/)
@@ -46,12 +48,12 @@ Two consequences worth stating plainly. A "backup node" inside the same proxy ap
 No packages to install, no dependencies to resolve. Clone at the reviewed tag and run a bounded read only scan of the machine you are sitting at.
 
 ```bash
-git clone --branch v0.5.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.5.1 --depth 1 https://github.com/Con-Benksl/NetOps.git
 cd NetOps
 python3 scripts/netopsctl.py scan client --output client.json
 ```
 
-Requires Python 3.10 to 3.14. If the `v0.5.0` tag does not exist, that clone is meant to fail; do not fall back to `main` or to a floating version.
+Requires Python 3.10 to 3.14. If the `v0.5.1` tag does not exist, that clone is meant to fail; do not fall back to `main` or to a floating version.
 
 Optionally install it as a command:
 
@@ -65,7 +67,7 @@ netopsctl --help
 Requires Node.js 22.20.0 or newer. Install from an exact reviewed release tag. Never hand a floating branch or a `latest` pipeline to a shell; both the installer version and the NetOps tag below are pinned. The installer may go non interactive inside an agent environment, so list first and confirm that exactly `netops` and its five sub Skills are discovered, then install as a separate step.
 
 ```bash
-git clone --branch v0.5.0 --depth 1 https://github.com/Con-Benksl/NetOps.git
+git clone --branch v0.5.1 --depth 1 https://github.com/Con-Benksl/NetOps.git
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -l --full-depth
 NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent codex --full-depth --skill '*'
 ```
@@ -308,7 +310,7 @@ python3 scripts/check_install_tree.py .
 python3 scripts/release_check.py .
 ```
 
-That suite is 414 tests as of 0.5.0, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
+That suite is 414 tests as of 0.5.1, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
 
 Release artefacts must clear a double build gate. Install the pinned build tooling, then pass an explicit Unix timestamp and an output directory that does not yet exist:
 
