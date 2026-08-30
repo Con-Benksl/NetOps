@@ -14,6 +14,13 @@ this work is reconciled with the published repository.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-30
+
+This release separates conversational findings from persisted scan evidence,
+strengthens explicit execution consent and subscription credential redaction,
+and adds a content-bound transactional synchronizer for the root Skill and its
+five direct-invocation installations.
+
 ### Changed
 
 - Formal scans now persist only the machine-readable JSON bundle by default;
@@ -285,7 +292,8 @@ together.
 - Remote change execution was unreleased in this version. Plans could be
   produced and reviewed, but nothing applied them.
 
-[Unreleased]: https://github.com/Con-Benksl/NetOps/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Con-Benksl/NetOps/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Con-Benksl/NetOps/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Con-Benksl/NetOps/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Con-Benksl/NetOps/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Con-Benksl/NetOps/compare/v0.3.1...v0.4.0

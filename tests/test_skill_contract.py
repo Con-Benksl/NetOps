@@ -666,7 +666,7 @@ class SkillContractTests(unittest.TestCase):
                     self.assertIn(phrase, text)
                 self.assertEqual(
                     text.count(
-                        "git clone --branch v0.5.1 --depth 1 "
+                        "git clone --branch v0.6.0 --depth 1 "
                         "https://github.com/Con-Benksl/NetOps.git"
                     ),
                     2,
