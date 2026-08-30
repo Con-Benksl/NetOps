@@ -287,6 +287,21 @@ def _normalized_file_mode(mode: int) -> int:
     return 0o755 if mode & 0o111 else 0o644
 
 
+def _windows_stat_semantics() -> bool:
+    return os.name == "nt"
+
+
+def _comparable_ctime_ns(info: os.stat_result) -> int:
+    if _windows_stat_semantics():
+        # Since Python 3.12, path-based stat calls expose creation time as
+        # st_ctime_ns for compatibility while fstat() can expose the Windows
+        # metadata-change time.  st_birthtime_ns is the stable creation-time
+        # field shared by both views.  Older Python versions have no explicit
+        # birth-time field, but their st_ctime_ns already has that meaning.
+        return getattr(info, "st_birthtime_ns", info.st_ctime_ns)
+    return info.st_ctime_ns
+
+
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return
@@ -325,6 +340,18 @@ def _mkdir_durable(path: Path, *, mode: int) -> None:
 
 
 def _signature(info: os.stat_result) -> SourceSignature:
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        _comparable_ctime_ns(info),
+        _normalized_file_mode(info.st_mode),
+    )
+
+
+def _handle_signature(info: os.stat_result) -> SourceSignature:
+    """Return metadata comparable only between reads of one open handle."""
     return (
         info.st_dev,
         info.st_ino,
@@ -380,6 +407,7 @@ def _copy_current_regular(
             raise SyncError(f"tracked source changed type while staging: {source}")
         if _signature(before) != expected_signature:
             raise SyncError(f"tracked source payload changed before staging: {source}")
+        handle_signature = _handle_signature(before)
         mode = _normalized_file_mode(before.st_mode)
         with os.fdopen(descriptor, "rb", closefd=False) as input_stream:
             with destination.open("xb") as output_stream:
@@ -412,6 +440,8 @@ def _copy_current_regular(
                 f"tracked source executable mode changed while staging: {source}"
             )
         if _signature(after) != expected_signature:
+            raise SyncError(f"tracked source changed while staging: {source}")
+        if _handle_signature(after) != handle_signature:
             raise SyncError(f"tracked source changed while staging: {source}")
         _fsync_directory(destination.parent)
     finally:
@@ -492,6 +522,7 @@ def _verify_source_payload_stable(
                 raise SyncError(
                     f"tracked source payload changed after staging: {relative!s}"
                 )
+            handle_signature = _handle_signature(source_info)
             staged_descriptor, staged_info = _open_regular_no_follow(
                 staged,
                 label="staged source copy",
@@ -509,7 +540,10 @@ def _verify_source_payload_stable(
                     )
                 if not source_chunk:
                     break
-            if _signature(os.fstat(source_descriptor)) != expected:
+            final_source_info = os.fstat(source_descriptor)
+            if _signature(final_source_info) != expected or (
+                _handle_signature(final_source_info) != handle_signature
+            ):
                 raise SyncError(
                     f"tracked source payload changed during final verification: "
                     f"{relative!s}"
@@ -694,7 +728,7 @@ def _manifest_sha256(
                     while chunk := stream.read(1024 * 1024):
                         digest.update(chunk)
                 after = os.fstat(descriptor)
-                if _signature(opened) != _signature(after):
+                if _handle_signature(opened) != _handle_signature(after):
                     raise SyncError(
                         f"staged manifest file changed while hashing: "
                         f"{target_relative!s}"

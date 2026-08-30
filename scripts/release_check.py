@@ -46,6 +46,7 @@ REQUIRED_MANIFEST_LINES = (
     "include pyproject.toml",
     "include MANIFEST.in",
     "include .github/workflows/test.yml",
+    "include .github/PULL_REQUEST_TEMPLATE.md",
     "recursive-include agents *",
     "recursive-include examples *",
     "recursive-include references *",

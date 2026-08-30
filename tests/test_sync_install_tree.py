@@ -84,6 +84,20 @@ def apply_confirmed(source: Path, install: Path) -> dict[str, object]:
     )
 
 
+class _CtimeView:
+    def __init__(self, wrapped, ctime_ns):
+        self._wrapped = wrapped
+        self.st_ctime_ns = ctime_ns
+        self.st_birthtime_ns = getattr(
+            wrapped,
+            "st_birthtime_ns",
+            wrapped.st_ctime_ns,
+        )
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+
 class SyncInstallTreeTests(unittest.TestCase):
     def test_doctor_and_synchronizer_share_the_residue_contract(self):
         from scripts.check_install_tree import _residue_root
@@ -146,6 +160,64 @@ class SyncInstallTreeTests(unittest.TestCase):
 
             self.assertEqual(len(manifest), 64)
             int(manifest, 16)
+
+    def test_windows_path_and_handle_ctime_views_do_not_false_positive(self):
+        with tempfile.TemporaryDirectory() as raw:
+            parent = Path(raw)
+            source = make_source(parent)
+            install = parent / "skills"
+            install.mkdir()
+            original_lstat = Path.lstat
+
+            def windows_path_lstat(path):
+                info = original_lstat(path)
+                if stat.S_ISREG(info.st_mode):
+                    return _CtimeView(info, info.st_ctime_ns + 1_000_000)
+                return info
+
+            with patch.object(
+                sync_module,
+                "_windows_stat_semantics",
+                return_value=True,
+            ), patch.object(Path, "lstat", windows_path_lstat):
+                receipt = sync_install_tree(source, install)
+
+            self.assertEqual(receipt["status"], "dry-run")
+            self.assertEqual(len(receipt["manifest_sha256"]), 64)
+
+    def test_windows_handle_ctime_changes_remain_fail_closed(self):
+        with tempfile.TemporaryDirectory() as raw:
+            parent = Path(raw)
+            source = make_source(parent)
+            tracked = source / "root.txt"
+            destination = parent / "staged.txt"
+            original_fstat = os.fstat
+            source_fstats = 0
+
+            def changing_handle_ctime(descriptor):
+                nonlocal source_fstats
+                info = original_fstat(descriptor)
+                source_fstats += 1
+                if source_fstats > 1:
+                    return _CtimeView(info, info.st_ctime_ns + 1_000_000)
+                return info
+
+            with patch.object(
+                sync_module,
+                "_windows_stat_semantics",
+                return_value=True,
+            ):
+                expected = sync_module._source_signature(
+                    tracked,
+                    label="tracked source",
+                )
+                with patch.object(os, "fstat", changing_handle_ctime):
+                    with self.assertRaisesRegex(SyncError, "changed while staging"):
+                        sync_module._copy_current_regular(
+                            tracked,
+                            destination,
+                            expected,
+                        )
 
     def test_manifest_v2_binds_the_canonical_install_root(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -1111,6 +1183,10 @@ module.sync_install_tree(
                 with self.assertRaisesRegex(SyncError, "tracked install residue"):
                     sync_install_tree(source, install)
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows denies replacement of an open source file",
+    )
     def test_atomic_source_replace_during_copy_fails_staging(self):
         with tempfile.TemporaryDirectory() as raw:
             parent = Path(raw)

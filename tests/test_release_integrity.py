@@ -106,6 +106,36 @@ class ReleaseIntegrityTests(unittest.TestCase):
             errors = _check_manifest_contract(root)
         self.assertTrue(any("include AGENTS.md" in item for item in errors), errors)
 
+    def test_manifest_gate_requires_only_the_github_contract_files(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+            manifest = manifest.replace(
+                "include .github/PULL_REQUEST_TEMPLATE.md\n",
+                "",
+                1,
+            )
+            (root / "MANIFEST.in").write_text(manifest, encoding="utf-8")
+            missing_errors = _check_manifest_contract(root)
+            self.assertTrue(
+                any(
+                    "include .github/PULL_REQUEST_TEMPLATE.md" in item
+                    for item in missing_errors
+                ),
+                missing_errors,
+            )
+
+            (root / "MANIFEST.in").write_text(
+                (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+                + "recursive-include .github *\n",
+                encoding="utf-8",
+            )
+            broad_errors = _check_manifest_contract(root)
+            self.assertTrue(
+                any("unexpected directive" in item for item in broad_errors),
+                broad_errors,
+            )
+
     def test_release_mode_accepts_clean_exact_tag_with_release_evidence(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

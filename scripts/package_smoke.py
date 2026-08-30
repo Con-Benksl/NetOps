@@ -35,6 +35,7 @@ REQUIRED_SDIST_FILES = (
     "pyproject.toml",
     "MANIFEST.in",
     ".github/workflows/test.yml",
+    ".github/PULL_REQUEST_TEMPLATE.md",
     "scripts/installed_smoke.py",
     "scripts/package_smoke.py",
     "scripts/sync_install_tree.py",
@@ -48,6 +49,18 @@ REQUIRED_SDIST_DIRECTORIES = (
     "scripts",
     "skills",
     "tests",
+)
+ALLOWED_GITHUB_SDIST_DIRECTORIES = frozenset(
+    {
+        ".github",
+        ".github/workflows",
+    }
+)
+ALLOWED_GITHUB_SDIST_FILES = frozenset(
+    {
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/workflows/test.yml",
+    }
 )
 FORBIDDEN_SDIST_PARTS = {
     ".git",
@@ -206,6 +219,17 @@ def _validate_sdist_layout(source_root: Path) -> None:
             raise RuntimeError(f"sdist required directory is empty: {relative}")
     for candidate in source_root.rglob("*"):
         relative = candidate.relative_to(source_root)
+        relative_text = relative.as_posix()
+        if relative.parts and relative.parts[0] == ".github":
+            allowed = (
+                relative_text in ALLOWED_GITHUB_SDIST_DIRECTORIES
+                if candidate.is_dir()
+                else relative_text in ALLOWED_GITHUB_SDIST_FILES
+            )
+            if not allowed:
+                raise RuntimeError(
+                    f"sdist contains unrelated GitHub metadata: {relative}"
+                )
         if any(part in FORBIDDEN_SDIST_PARTS for part in relative.parts):
             raise RuntimeError(f"sdist contains forbidden path: {relative}")
         if candidate.name == ".project-notes.md" or candidate.suffix in {".pyc", ".pyo"}:

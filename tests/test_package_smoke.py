@@ -150,6 +150,29 @@ class PackageSmokeArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "AGENTS.md"):
                 _validate_sdist_layout(source)
 
+    def test_layout_requires_pr_template_and_rejects_unrelated_github_metadata(self):
+        with tempfile.TemporaryDirectory() as raw:
+            source = Path(raw) / "package"
+            source.mkdir()
+            for relative in REQUIRED_SDIST_DIRECTORIES:
+                (source / relative).mkdir(parents=True, exist_ok=True)
+                (source / relative / ".keep").write_text("kept\n", encoding="utf-8")
+            for relative in REQUIRED_SDIST_FILES:
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("content\n", encoding="utf-8")
+
+            pr_template = source / ".github/PULL_REQUEST_TEMPLATE.md"
+            pr_template.unlink()
+            with self.assertRaisesRegex(RuntimeError, "PULL_REQUEST_TEMPLATE.md"):
+                _validate_sdist_layout(source)
+
+            pr_template.write_text("content\n", encoding="utf-8")
+            unrelated = source / ".github/dependabot.yml"
+            unrelated.write_text("content\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "unrelated GitHub metadata"):
+                _validate_sdist_layout(source)
+
     def test_artifact_module_parity_accepts_identical_modules(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
