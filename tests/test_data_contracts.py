@@ -561,6 +561,132 @@ class DataContractTests(unittest.TestCase):
         self.assertNotIn(query_secret, legacy)
         self.assertIn("safe=visible", legacy)
 
+    def test_subscription_urls_and_qr_payloads_are_fail_closed_without_hiding_docs(self):
+        opaque_token = "abcdefgh" + "ijklmnop"
+        subscription_url = "https://example.test/sub/" + opaque_token
+        literal_plus_url = "https://example.test/sub/abcdefghijklmno+"
+        encoded_separator_url = (
+            "https://example.test/sub/abcdefghijklmno%2Fprivate"
+        )
+        encoded_subscription_url = (
+            "https%3A%2F%2Fexample.test%2F%73%75%62%2F" + opaque_token
+        )
+        punctuated_subscription_urls = (
+            "https://example.test/sub/@abcdefghijklmnop",
+            "https://example.test/sub/:abcdefghijklmnop",
+            "https://example.test/sub/!abcdefghijklmnop",
+            "https://example.test/sub/abcdefghijklmnop@private",
+            "https://example.test/sub/abc12345",
+            "https://example.test/sub/秘密令牌",
+            "https://example.test/sub/secret-token-private-key",
+        )
+        ordinary_urls = {
+            "docs_url": "https://example.test/sub/documentation",
+            "help_url": "https://example.test/subscription/getting-started-guide",
+            "encoded_help_url": (
+                "https://example.test/subscription/getting%2Dstarted%2Dguide"
+            ),
+        }
+        subscription_fields = {
+            "subscription_url": subscription_url,
+            "subscribeURL": subscription_url,
+            "subUrl": subscription_url,
+            "subscriptionUri": subscription_url,
+            "subscribeLink": subscription_url,
+            "subscriptionEndpoint": subscription_url,
+            "subscriptionQrPayload": encoded_subscription_url,
+            "subscribeQRCode": encoded_subscription_url,
+            "subscriptionId": opaque_token,
+            "subUUID": opaque_token,
+        }
+        environment = {
+            **subscription_fields,
+            **ordinary_urls,
+            "messages": [
+                subscription_url,
+                literal_plus_url,
+                encoded_separator_url,
+                encoded_subscription_url,
+                *punctuated_subscription_urls,
+            ],
+        }
+
+        redactor = Redactor(
+            include_network_identifiers=True,
+            redact_hostnames=False,
+        )
+        sanitized = redactor.value(environment)
+        for field in subscription_fields:
+            self.assertEqual(sanitized[field], "<redacted>")
+        for field, url in ordinary_urls.items():
+            self.assertEqual(sanitized[field], url)
+        self.assertIn("subscription-credential", redactor.actions)
+        self.assertIsNone(bundle_module._residual_credential_path(sanitized))
+
+        # The second checker is deliberately independent of semantic-key
+        # redaction. It must still reject a leaked opaque endpoint under an
+        # otherwise ordinary field or mapping key, including one decoded layer.
+        for leaked in (
+            subscription_url,
+            literal_plus_url,
+            encoded_separator_url,
+            encoded_subscription_url,
+            *punctuated_subscription_urls,
+        ):
+            with self.subTest(leaked=leaked):
+                self.assertIsNotNone(
+                    bundle_module._residual_credential_path({"message": leaked})
+                )
+                with self.assertRaisesRegex(ValueError, "credential"):
+                    bundle_module._validate_no_residual_credentials(
+                        {"message": leaked}
+                    )
+        for leaked_key in (
+            subscription_url,
+            encoded_subscription_url,
+            *punctuated_subscription_urls,
+        ):
+            self.assertIsNotNone(
+                bundle_module._residual_credential_path({leaked_key: "fixture"})
+            )
+        for url in ordinary_urls.values():
+            self.assertIsNone(
+                bundle_module._residual_credential_path({"message": url})
+            )
+
+        bundle = DiagnosticBundle(
+            mode="node",
+            vantage_points=["test"],
+            environment=environment,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = write_bundle(root / "source.json", bundle)
+            local_raw = source.read_text(encoding="utf-8")
+            local_bundle = load_bundle(source)
+            archive = export_bundle(source, root / "support.zip")
+            inspected, report = inspect_bundle(archive)
+            with zipfile.ZipFile(archive) as handle:
+                archive_raw = handle.read("bundle.json").decode("utf-8")
+
+        all_output = local_raw + archive_raw + report
+        self.assertNotIn(opaque_token, all_output)
+        self.assertNotIn(encoded_subscription_url, all_output)
+        self.assertNotIn(literal_plus_url, all_output)
+        self.assertNotIn(encoded_separator_url, all_output)
+        self.assertNotIn("abcdefghijklmno+", all_output)
+        self.assertNotIn("abcdefghijklmno%2Fprivate", all_output)
+        for leaked in punctuated_subscription_urls:
+            self.assertNotIn(leaked, all_output)
+            self.assertNotIn(leaked.rsplit("/", 1)[-1], all_output)
+        for field in subscription_fields:
+            self.assertEqual(local_bundle.environment[field], "<redacted>")
+            self.assertEqual(inspected.environment[field], "<redacted>")
+        for url in ordinary_urls.values():
+            self.assertIn(url, local_raw)
+        self.assertIn("subscription-credential", local_bundle.redactions)
+        self.assertIn("subscription-credential", inspected.redactions)
+
     def test_generic_api_bearer_and_cross_platform_home_paths_are_redacted(self):
         redactor = Redactor(include_network_identifiers=True)
         redactor.home = r"C:\Users\Alice"

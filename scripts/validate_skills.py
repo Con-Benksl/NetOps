@@ -26,13 +26,18 @@ FORBIDDEN = {
 }
 IP_LITERAL = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
 GUIDED_RULES = (
-    "每轮最多提 3 个问题",
-    "每题提供 2–3 个互斥选项",
-    "推荐项放在第一位",
-    "request_user_input",
-    "能够通过只读扫描获得",
+    "目标、范围和授权边界明确时直接处理，不先展示流程菜单",
+    "只有缺少的用户选择无法通过安全的只读检查获得",
+    "默认一次只问一个问题",
+    "不把讲解深度、扫描深度或流程阶段做成默认菜单",
     "不能代替对最终远程操作的明确授权",
 )
+FORCED_CHOICE_RE = re.compile(
+    r"(?:先|首先).{0,48}(?:选项|菜单)|(?:给我|提供).{0,32}(?:入门)?选项"
+)
+NEGATED_CHOICE_RE = re.compile(r"(?:不强制|不先|不要|无需|不必|不会)[^；。\n]{0,16}$")
+SHORT_DESCRIPTION_MIN = 25
+SHORT_DESCRIPTION_MAX = 64
 CONTROL_CHANNEL_RULES = (
     "每次只给一个主要动作",
     "预期结果",
@@ -170,6 +175,57 @@ def _check_flat_install_reference_contract(
     return errors
 
 
+def _check_agent_prompt_contract(path: Path, skill_name: str) -> list[str]:
+    """Validate adapter metadata and reject mandatory clarification menus."""
+
+    text = path.read_text(encoding="utf-8")
+    errors: list[str] = []
+    short_matches = re.findall(
+        r"^  short_description:[ ](.+)$", text, flags=re.MULTILINE
+    )
+    if len(short_matches) != 1:
+        errors.append(
+            f"{path}: interface.short_description must appear exactly once"
+        )
+    else:
+        encoded = short_matches[0]
+        try:
+            short_description = json.loads(encoded)
+        except json.JSONDecodeError:
+            short_description = None
+        if not isinstance(short_description, str):
+            errors.append(
+                f"{path}: interface.short_description must be a JSON "
+                "double-quoted string"
+            )
+        elif not (
+            SHORT_DESCRIPTION_MIN
+            <= len(short_description)
+            <= SHORT_DESCRIPTION_MAX
+        ):
+            errors.append(
+                f"{path}: interface.short_description must be "
+                f"{SHORT_DESCRIPTION_MIN}-{SHORT_DESCRIPTION_MAX} characters; "
+                f"got {len(short_description)}"
+            )
+    if "default_prompt:" not in text:
+        errors.append(f"{path}: missing default_prompt")
+    if f"${skill_name}" not in text:
+        errors.append(f"{path}: default prompt must invoke ${skill_name}")
+    if "直接" not in text:
+        errors.append(f"{path}: clear requests must proceed directly")
+    if not re.search(r"(?:只有[^。\n]*问一个问题|缺少[^。\n]*才问一个问题)", text):
+        errors.append(f"{path}: ask one question only when missing information matters")
+    for match in FORCED_CHOICE_RE.finditer(text):
+        prefix = text[max(0, match.start() - 20) : match.start()]
+        if not NEGATED_CHOICE_RE.search(prefix):
+            errors.append(
+                f"{path}: default prompt must not force choices before a clear request"
+            )
+            break
+    return errors
+
+
 def classify_intent(prompt: str) -> str | None:
     """Return the workflow implied by the requested next outcome.
 
@@ -207,7 +263,7 @@ def classify_intent(prompt: str) -> str | None:
     ):
         return "netops-build"
     if re.search(
-        r"先检测|查看这台|比较两台|记录节点|检查.*(?:延迟|丢包|路由|回程线路|"
+        r"先检测|查看这台|比较两台|记录节点|保存.*基线|建立.*基线|检查.*(?:延迟|丢包|路由|回程线路|"
         r"出口 IP)|确认.*出口|路径采样|线路快照|DNS 延迟|实际使用了|当前使用了",
         prompt,
     ):
@@ -310,9 +366,7 @@ def main(argv=None) -> int:
     if not root_agent.is_file():
         errors.append("root skill missing agents/openai.yaml")
     else:
-        prompt_text = root_agent.read_text(encoding="utf-8")
-        if "选项" not in prompt_text or "解释" not in prompt_text:
-            errors.append("root default prompt must request explained choices")
+        errors.extend(_check_agent_prompt_contract(root_agent, "netops"))
     child_paths = sorted((root / "skills").glob("*/SKILL.md"))
     expected_skill_files = {
         (root / "SKILL.md").resolve(),
@@ -357,13 +411,9 @@ def main(argv=None) -> int:
         if not agent_path.is_file():
             errors.append(f"{path}: missing agents/openai.yaml")
         else:
-            prompt_text = agent_path.read_text(encoding="utf-8")
-            if "选项" not in prompt_text or "解释" not in prompt_text:
-                errors.append(f"{agent_path}: default prompt must request explained choices")
+            errors.extend(_check_agent_prompt_contract(agent_path, name))
         text = path.read_text(encoding="utf-8")
         errors.extend(_check_child_reference_contract(path))
-        if "## Guided Choices" not in text:
-            errors.append(f"{path}: missing Guided Choices section")
         if "<reference-root>/guided-dialogue.md" not in text:
             errors.append(f"{path}: must reference guided-dialogue.md")
         if "<reference-root>/control-channel-safety.md" not in text:

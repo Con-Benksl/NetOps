@@ -33,8 +33,10 @@
 <!-- gate output -->
 ```
 
-- [ ] For a release change only: `python3 scripts/reproducible_build.py .` and
-      `python3 scripts/package_smoke.py .` both pass.
+- [ ] For a release change only: the clean tagged-tree
+      `python3 scripts/release_check.py . --require-jsonschema --release-mode`
+      gate passes before `python3 scripts/reproducible_build.py .` and
+      `python3 scripts/package_smoke.py .` create or inspect release artefacts.
 
 ## Project rules
 
@@ -49,8 +51,10 @@
       UUID or API token anywhere, including tests, fixtures and examples.
 - [ ] The scanner stays bounded and read only. Any external lookup or third party
       tool still requires an explicit flag.
-- [ ] Every user facing diagnostic this change touches still renders both a Chinese
-      beginner report and machine readable JSON. Neither was added without the other.
+- [ ] Output matches the task: ordinary questions create no files, formal scans write
+      machine readable JSON by default, the Agent gives the Chinese conclusion in the
+      current conversation, and standalone reports require an explicit request or
+      export.
 - [ ] Tests and schemas moved together with the contract. If the diagnostic, change
       plan or fleet contract changed, `schemas/` and `tests/` changed in this same
       pull request.
@@ -62,10 +66,11 @@
       classification, skip a confirmation or trigger a command.
 - [ ] Normative safety text was not duplicated. It lives at the single source named
       in the `AGENTS.md` table, and everything else points at it.
-- [ ] Chinese for `references/`, `README.zh-CN.md` and user facing reports; English
-      for `SKILL.md` bodies, code, `README.md` and commits. If one README changed,
-      the other changed too. British English spelling in English prose. No em dashes,
-      no en dashes, and no hyphens between English words.
+- [ ] Chinese for `references/`, `README.zh-CN.md`, user facing conversations and
+      explicitly requested reports; English for `SKILL.md` bodies, code, `README.md`
+      and commits. If one README changed, the other changed too. British English
+      spelling in English prose. No em dashes, no en dashes, and no hyphens between
+      English words.
 
 ## Safety review
 

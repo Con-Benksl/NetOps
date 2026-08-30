@@ -44,7 +44,7 @@ NetOps 会从当前能够访问的观察点收集信息：
 | 专项工具 | 按问题选择 MTR、NextTrace、dnsdiag、testssl.sh、IPQuality 或 iperf3，不会默认全部运行 |
 | 两台设备对比 | 在目标、协议和时间窗口一致时比较两份诊断结果 |
 
-运营商和代理服务商的内部网络通常无法完全看见。报告会把这类区段标成“无法观测”，不会拿一次 traceroute 或 ASN 查询冒充完整线路图。
+运营商和代理服务商的内部网络通常无法完全看见。结果会把这类区段标成“无法观测”，不会拿一次 traceroute 或 ASN 查询冒充完整线路图。
 
 ## 最简单的用法
 
@@ -74,17 +74,7 @@ NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent
 给这个节点生成故障监控调度审查计划，不安装任务。
 ```
 
-你不需要先弄懂所有术语。如果一句话里还缺少关键条件，NetOps 会给出少量带解释的选项：
-
-```text
-目前还不知道问题在客户端还是服务器，先选一个观察范围：
-
-1. 当前设备（推荐）：先做本机只读扫描，不会连接或修改 VPS。
-2. VPS：检查服务、监听、路由和资源，需要确认 SSH 授权。
-3. 节点全链路：同时收集客户端、VPS 和目标站证据，耗时更长但归因更完整。
-```
-
-每轮最多出现 3 个问题，每题只有 2 到 3 个选项。推荐项会放在前面，每个选项都会说明接下来做什么、有什么限制。能自动扫描出来的信息不会反过来让你猜；你的目标已经明确时，也不会强制弹出菜单。
+你不需要先弄懂所有术语。目标和安全边界明确时，NetOps 会直接执行对应的安全步骤，不会先强制弹出选项。只有缺失的决定确实会改变范围、风险、费用或远程修改权限时才提问；能通过只读扫描获得的事实不会反过来让你猜。普通问答和配置建议只在当前对话中回复，不创建文件。
 
 如果信息不够，NetOps 会优先建议只读扫描。需要改服务器时，它会先说明准备改什么、不会改什么、预计中断多久、失败有什么影响，以及怎样备份、验证和回滚。独立远端 VPS 可以在确认后由 Agent 直接 SSH 执行；高风险精确文件事务或共享远端路径可以改用不可变计划和自动回滚。两种方式都只问一次 `执行 / 只保留方案 / 取消`，不会把远端命令甩给用户手动完成。
 
@@ -125,6 +115,15 @@ python3 scripts/netopsctl.py --help
 python3 scripts/netopsctl.py scan client --output client.json
 ```
 
+上面的 `scan client` 命令默认只生成供程序读取和后续比较的
+`client.json`。通过 Agent Skill 扫描时，Agent 会直接在当前对话给出中文结论、
+关键证据、限制和下一步，不另外创建很少有人打开的报告文件。需要独立 Markdown
+报告时再显式导出：
+
+```bash
+netopsctl bundle inspect client.json --report-output client-review.md
+```
+
 在任何网络变更前，可以先做控制通道初步判断。例如，下面表示 Agent 已经通过一条不经过待修改服务的独立管理路径完成实测：
 
 ```bash
@@ -154,7 +153,7 @@ netopsctl change apply \
 
 `current-control-channel.json` 必须只包含 `observed_at` 和与计划完全一致的 `control_channel`，时间不得早于执行前 15 分钟。通过 Skill 工作时该文件由 Agent 根据刚完成的检查生成，不要求用户手写。缺少 `--authorized`、计划 ID 不匹配、计划超过 24 小时、控制通道证据过期或改变、现场文件变化时，精确计划执行器会在首次远程写入前停止。门禁重新计算为 `warn` 时同样会停止，除非本次执行已经加上 `--accept-residual-risk`；`can_apply_with_acknowledgment` 为 `false`（例如涉及本机控制面）时，加了该参数也不会继续。已确认的风险会写入回执的 `acknowledged_risks`。失败后先看回执；状态为 `rollback-pending` 时等待已武装的自动回滚，不要重复应用；状态为 `consent-required` 时表示门禁给出 `warn` 而本次没有提供知情同意，回滚尚未发生。
 
-这条命令会生成两个文件：供程序读取的 `client.json`，以及适合直接阅读的 `client.md`。如果还需要确认公网出口，可以主动加上 `--external`：
+如果还需要确认公网出口，可以主动加上 `--external`：
 
 ```bash
 python3 scripts/netopsctl.py scan client --external --output client.json
@@ -226,20 +225,11 @@ python3 -m pip install .
 netopsctl --help
 ```
 
-## 报告怎么看
+## 结果怎么看与按需导出报告
 
-每次扫描都会同时输出 JSON 和中文 Markdown 报告。中文报告按固定顺序整理：
+正式扫描默认只保存 JSON 证据，中文结论在当前对话中阅读即可。重点看异常区段、支持证据、限制和推荐下一步。延迟高、某一跳丢包或者公网 IP 变化都只是线索，不能单独证明故障原因。
 
-1. 一句话结论
-2. 检测到的环境
-3. 可观测链路图
-4. 异常发生在哪一段
-5. 支持结论的证据
-6. 当前最值得做的一步
-7. 无法观测的部分
-8. 给需要深入了解的读者看的解释
-
-先看“异常区段”和“推荐下一步”就够了。延迟高、某一跳丢包或者公网 IP 变化都只是线索，不能单独证明故障原因。
+只有需要离线存档或交给别人阅读时，才用 `bundle inspect ... --report-output ...` 显式生成独立报告。
 
 需要把结果交给别人时，导出经过校验的支持包：
 
@@ -248,7 +238,7 @@ netopsctl bundle export diagnostics/node.json --output node-support.zip
 netopsctl bundle inspect node-support.zip --report-output node-support-review.md
 ```
 
-支持包必须使用 `.zip`；默认移除 IP、域名、IDN、MAC、用户目录、凭据，以及出现在值、主机语境或显式 `*_by_host`/`hosts` 映射中的单标签主机。任意 JSON 单词键无法可靠区分“字段名”和“主机名”，因此动态的主机键映射必须采用上述显式命名；否则导出器会把键当作字段名保留。导出器会用结构化规则和高置信启发式检查拒绝疑似残留凭据，但任何启发式都无法证明任意不透明字符串必然安全；对外分享前仍须人工复核归档内容。归档内 SHA-256 只验证三个成员彼此自洽、未在检查后被静默改写，不是数字签名，也不能证明文件来自哪台设备或哪位操作者。源文件、目标 ZIP、检查报告以及扫描隐式生成的 Markdown 都不会静默覆盖已有文件；若确实要重用文件名，应先人工归档旧证据。只有明确使用 `--include-network-identifiers` 才会保留网络标识。
+支持包必须使用 `.zip`；默认移除 IP、域名、IDN、MAC、用户目录、凭据，以及出现在值、主机语境或显式 `*_by_host`/`hosts` 映射中的单标签主机。任意 JSON 单词键无法可靠区分“字段名”和“主机名”，因此动态的主机键映射必须采用上述显式命名；否则导出器会把键当作字段名保留。导出器会用结构化规则和高置信启发式检查拒绝疑似残留凭据，但任何启发式都无法证明任意不透明字符串必然安全；对外分享前仍须人工复核归档内容。归档内 SHA-256 只验证三个成员彼此自洽、未在检查后被静默改写，不是数字签名，也不能证明文件来自哪台设备或哪位操作者。源文件、目标 ZIP 和显式请求的检查报告都不会静默覆盖已有文件；若确实要重用文件名，应先人工归档旧证据。只有明确使用 `--include-network-identifiers` 才会保留网络标识。
 
 ## 命令速查
 
@@ -295,7 +285,7 @@ netopsctl bundle inspect node-support.zip --report-output node-support-review.md
 - NetOps 不会通过 `curl | bash` 静默下载浮动版本，也不会让外部脚本自动安装系统依赖。
 - 导出的诊断包默认会隐藏 IP、域名、用户目录和疑似凭据。
 - 客户端控制通道扫描只保存系统代理是否启用，不保存 PAC URL、代理地址或代理环境变量的值。
-- 密码、私钥、节点链接、用户/节点/凭据 UUID、代理账号和 API Token 不应写入仓库或报告。NetOps 自己生成的 `run_id`、`observation_id` 及其证据引用是诊断外键，会保留在本地 JSON 和报告中。
+- 密码、私钥、节点链接、用户/节点/凭据 UUID、代理账号和 API Token 不应写入仓库或导出报告。NetOps 自己生成的 `run_id`、`observation_id` 及其证据引用是诊断外键，会保留在本地 JSON 和显式导出的报告中。
 - 公开仓库只提供匿名示例。真实主机资料应放在符合 `schemas/fleet.schema.json` 的私有覆盖仓库中；该 Schema 负责可移植的结构与高置信凭据预检，CLI 加载时还会执行权威的 IDNA、Unicode 类别和完整语义复核，两层都必须通过。
 - 扫描只适用于你拥有或明确获准管理的设备。
 
@@ -321,7 +311,14 @@ python3 scripts/check_install_tree.py .
 python3 scripts/release_check.py .
 ```
 
-发布制品必须经过双构建门禁。先安装项目固定的构建工具，再传入明确的 Unix 时间戳和一个尚不存在的输出目录：
+发布提交已经带有准确的 `v<版本号>` 标签后，必须先在干净工作树运行 Git 与 Changelog 发布门禁，不能先在仓库内创建 `release-dist/`：
+
+```bash
+python3 -m pip install "jsonschema==4.25.1"
+python3 scripts/release_check.py . --require-jsonschema --release-mode
+```
+
+只有这项门禁通过后，发布制品才进入双构建门禁。安装项目固定的构建工具，再传入明确的 Unix 时间戳和一个尚不存在的输出目录：
 
 ```bash
 python3 -m pip install "build==1.3.0" "setuptools==83.0.0"

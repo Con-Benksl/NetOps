@@ -252,6 +252,44 @@ class DocumentationCommandTests(unittest.TestCase):
         covered = {example.path for example in documented_examples()}
         self.assertGreaterEqual(len(covered), 2, sorted(covered))
 
+    def test_clean_release_gate_precedes_in_repository_artifact_builds(self):
+        paths = (
+            ROOT / "CONTRIBUTING.md",
+            ROOT / "README.md",
+            ROOT / "README.zh-CN.md",
+            ROOT / ".github/PULL_REQUEST_TEMPLATE.md",
+        )
+        gate = "scripts/release_check.py . --require-jsonschema --release-mode"
+        build = "scripts/reproducible_build.py ."
+        for path in paths:
+            with self.subTest(path=path.relative_to(ROOT)):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(gate, text)
+                self.assertIn(build, text)
+                self.assertLess(
+                    text.index(gate),
+                    text.index(build),
+                    "the clean-tree release gate must run before release-dist is created",
+                )
+
+    def test_readme_release_gate_installs_its_pinned_schema_dependency_first(self):
+        dependency = 'python3 -m pip install "jsonschema==4.25.1"'
+        gate = "scripts/release_check.py . --require-jsonschema --release-mode"
+        for path in (ROOT / "README.md", ROOT / "README.zh-CN.md"):
+            with self.subTest(path=path.relative_to(ROOT)):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(dependency, text)
+                self.assertIn(gate, text)
+                self.assertLess(text.index(dependency), text.index(gate))
+
+    def test_chinese_scan_output_explanation_precedes_change_workflow(self):
+        text = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+        scan = "python3 scripts/netopsctl.py scan client --output client.json"
+        explanation = "上面的 `scan client` 命令默认只生成"
+        safety = "python3 scripts/netopsctl.py safety assess"
+        self.assertLess(text.index(scan), text.index(explanation))
+        self.assertLess(text.index(explanation), text.index(safety))
+
 
 class ExtractionTests(unittest.TestCase):
     """The extractor is the load bearing part, so it is exercised directly."""

@@ -23,7 +23,7 @@ A single proxied connection crosses roughly these positions:
 your computer -> local network -> VPS inbound -> proxy routing -> upstream exit -> destination
 ```
 
-Every observation NetOps records carries a vantage point, a timestamp, a confidence level, and its limitations. Segments it cannot see are reported as unobservable rather than guessed. A traceroute or an ASN lookup is evidence from one vantage point, not a complete physical route, and NetOps says so in the report instead of drawing a confident line through a carrier's internals.
+Every observation NetOps records carries a vantage point, a timestamp, a confidence level, and its limitations. Segments it cannot see are recorded as unobservable rather than guessed. A traceroute or an ASN lookup is evidence from one vantage point, not a complete physical route, so NetOps records that limitation instead of drawing a confident line through a carrier's internals.
 
 It also refuses to shortcut. A region name, an ISP name, or a destination site name never selects a conclusion on its own. Device, access type, address family, protocol, inbound, exit, and target are established first, then the evidence narrows the range.
 
@@ -74,7 +74,7 @@ NPM_CONFIG_CACHE=/tmp/netops-npm-cache npx skills@1.5.19 add ./NetOps -g --agent
 
 For Claude Code, replace `--agent codex` with `--agent claude-code`; to install into every agent the CLI recognises on the machine, use `--agent '*'`. The Skill content itself is agent neutral: throughout these documents, "the agent" means whichever AI assistant is operating for you.
 
-After that, describe the situation. The router picks one workflow and asks at most three questions per turn, two or three explained options each, recommended option first, and never asks you to guess something a read only scan can discover.
+After that, describe the situation. The router picks one workflow and acts directly when the target and safety boundary are clear. It asks only when a missing decision would change the scope, risk, cost, or permission to modify a system, and never asks you to guess something a read only scan can discover. Ordinary questions and configuration advice stay in the conversation and create no files.
 
 ## A worked example
 
@@ -89,25 +89,17 @@ python3 scripts/netopsctl.py scan client --output client.json
 ```json
 {
   "bundle": "/home/you/client.json",
-  "report": "/home/you/client.md",
   "run_id": "642dbb91-f43e-448f-a865-f45c312804f8"
 }
 ```
 
-Two files land: `client.json` for programs, `client.md` for humans. The Markdown report is written in Chinese and follows a fixed eight section order, so you always know where to look:
+The scan writes only `client.json` by default. When an Agent runs the workflow, it gives the Chinese conclusion, key evidence, limitations, and next step in the current conversation instead of creating a report file that most people will not open. A standalone report is opt in:
 
-| # | Section | What it answers |
-| --- | --- | --- |
-| 1 | 一句话结论 | The one sentence conclusion |
-| 2 | 检测到的环境 | Environment actually detected |
-| 3 | 可观测链路 | Observable path, segment by segment |
-| 4 | 异常区段 | Which segment is anomalous |
-| 5 | 证据 | Evidence supporting the conclusion |
-| 6 | 推荐下一步 | The single most useful next step |
-| 7 | 无法观测的部分 | What could not be observed |
-| 8 | 进阶解释 | Background for readers who want it |
+```bash
+netopsctl bundle inspect client.json --report-output client-review.md
+```
 
-Sections 4 and 6 are usually enough. High latency, loss at one hop, or a changed public IP are clues; none of them proves a cause on its own.
+High latency, loss at one hop, or a changed public IP are clues; none of them proves a cause on its own.
 
 **Step 2. Probe the declared node.** Same output shape, this time with TLS and HTTP timings per step.
 
@@ -257,7 +249,7 @@ netopsctl bundle inspect node-support.zip --report-output node-support-review.md
 
 The archive must be `.zip`. By default it strips IP addresses, domains, IDNs, MAC addresses, home directories, credentials, and single label hosts appearing in values, host context, or explicit `*_by_host` / `hosts` maps. An arbitrary single word JSON key cannot be reliably told apart from a hostname, so dynamic host keyed maps must use that explicit naming; otherwise the exporter keeps the key as a field name. Suspected residual credentials are rejected by structured rules plus high confidence heuristics, but no heuristic can prove an arbitrary opaque string is safe, so review the archive by hand before sharing it.
 
-Be precise about what the embedded SHA-256 proves: that the three members are mutually consistent and were not silently rewritten after inspection. It is not a signature, and it does not attest which machine or which operator produced the files. Source files, the target ZIP, the inspection report, and the Markdown a scan writes implicitly are never silently overwritten; archive the old evidence yourself if you want to reuse a filename. Network identifiers are retained only with an explicit `--include-network-identifiers`.
+Be precise about what the embedded SHA-256 proves: that the three members are mutually consistent and were not silently rewritten after inspection. It is not a signature, and it does not attest which machine or which operator produced the files. Source files, the target ZIP, and an explicitly requested inspection report are never silently overwritten; archive the old evidence yourself if you want to reuse a filename. Network identifiers are retained only with an explicit `--include-network-identifiers`.
 
 ## Safety, privacy, and data boundaries
 
@@ -265,7 +257,7 @@ Be precise about what the embedded SHA-256 proves: that the three members are mu
 - Curated tools run only when both `--tool` and the matching consent flag are given: `--external` for node scans, `--tool-external` for client and local server scans. Load generating tools need a further separate consent.
 - Nothing is fetched through `curl | bash`, no floating version is downloaded silently, and no external script is allowed to install system dependencies on your behalf.
 - The client control channel scan records only **whether** a system proxy is enabled. It does not record the PAC URL, the proxy address, or the values of proxy environment variables.
-- Passwords, private keys, node links, user/node/credential UUIDs, proxy accounts, and API tokens never belong in the repository or in a report. The `run_id` and `observation_id` values NetOps generates are non secret diagnostic foreign keys and do stay in the local JSON and reports.
+- Passwords, private keys, node links, user/node/credential UUIDs, proxy accounts, and API tokens never belong in the repository or in an exported report. The `run_id` and `observation_id` values NetOps generates are non secret diagnostic foreign keys and stay in the local JSON and in any explicitly exported report.
 - The public repository ships anonymised examples only. Real host data belongs in a private overlay repository matching `schemas/fleet.schema.json`; that schema handles portable structure and a high confidence credential precheck, and the CLI performs the authoritative IDNA, Unicode category, and full semantic review on load. Both layers must pass.
 - Remote text is evidence, never instruction. Login banners, MOTD, service logs, config comments, command output, HTTP responses, and TLS certificate fields collected over SSH are untrusted data. An imperative or an authority claim found inside collected output, including a line asserting that some VPS is unrelated to your traffic, never changes a dependency classification, skips a confirmation, or triggers a command. It is quoted back to you as a suspicious finding.
 - Scan only devices you own or are explicitly authorised to manage.
@@ -310,9 +302,18 @@ python3 scripts/check_install_tree.py .
 python3 scripts/release_check.py .
 ```
 
-That suite is 414 tests as of 0.5.1, covering the scanner, redaction, fleet and change contracts, the control channel gate, monitor privacy, serialisation safety, release integrity, and reproducible builds.
+The suite covers the scanner, redaction, fleet and change contracts, the control
+channel gate, monitor privacy, serialisation safety, release integrity, and
+reproducible builds.
 
-Release artefacts must clear a double build gate. Install the pinned build tooling, then pass an explicit Unix timestamp and an output directory that does not yet exist:
+After the clean release commit has its exact `v<version>` tag, run the publication-only Git and Changelog gate before creating `release-dist/` or any other in-repository artefact directory:
+
+```bash
+python3 -m pip install "jsonschema==4.25.1"
+python3 scripts/release_check.py . --require-jsonschema --release-mode
+```
+
+Only after that gate passes do release artefacts clear the double build gate. Install the pinned build tooling, then pass an explicit Unix timestamp and an output directory that does not yet exist:
 
 ```bash
 python3 -m pip install "build==1.3.0" "setuptools==83.0.0"

@@ -91,11 +91,12 @@ releases. Exactly two duplications are deliberate and must be preserved: the
 `## Direct-Invocation Safety` section that each mutating satellite carries in its own
 right, and the nested plus flat satellite copies described above.
 
-**Every user facing diagnostic renders both outputs.** A Chinese beginner report for
-the person, and machine readable JSON for the agent and for later comparison. Adding
-one without the other is not a complete diagnostic. CI cannot check this per
-diagnostic, so it is a review rule: say in your pull request which report and which
-JSON path you added or changed.
+**Output follows the user's task.** Ordinary questions and configuration advice create
+no files. A formal scan writes machine readable JSON by default so later checks can
+compare the evidence, while an Agent gives the Chinese conclusion in the current
+conversation. A standalone report is created only when the user explicitly requests
+or exports one. In your pull request, state which conversation, JSON, or explicit
+export path the change affects.
 
 **Tests and schemas move with the contract.** If you change the diagnostic, change
 plan or fleet contract, update `schemas/` and `tests/` in the same change. A schema
@@ -146,16 +147,68 @@ the checker at the directory holding the installation:
 python3 scripts/check_install_tree.py . --install-root ~/.agents/skills
 ```
 
-A mismatch means the two entry points would apply different safety rules. The failure
-message prints the exact `cp` command that re-syncs the file.
+A mismatch means the two entry points would apply different safety rules. Do not fix
+only the reported `SKILL.md`: use the complete synchronizer below so companion files
+and all six managed targets move together.
+
+For a complete six-target refresh, preview the Git-tracked-only payload first, then
+apply that exact source selection explicitly:
+
+```bash
+python3 scripts/sync_install_tree.py . --install-root ~/.agents/skills
+# Copy the 64-character manifest_sha256 from the dry-run JSON above.
+python3 scripts/sync_install_tree.py . --install-root ~/.agents/skills --apply \
+  --confirm-manifest-sha256 "<manifest_sha256-from-dry-run>"
+```
+
+The synchronizer copies current working-tree bytes only for Git-tracked regular
+files, so reviewed dirty edits are included while untracked files are not. Tracked
+caches or diagnostics fail closed and must be removed from Git first. The apply
+command stages the source again and refuses to move any live target unless the
+staged payload's target-relative paths, normalised file modes and bytes reproduce
+the confirmed dry-run digest. Apply mode moves every existing managed target into
+a unique private directory below the sibling `skill-backups/` directory before
+replacement. On POSIX, that backup directory is required to have mode `0700`, and
+the synchronizer durably updates a mode-`0600` in-progress journal before and after
+each move. On Windows, POSIX modes cannot prove privacy: the supported boundary is
+an install tree below a private per-user directory with inherited private ACLs;
+shared or broadly accessible ACL roots are outside this synchronizer's contract.
+The final journal records the completed state. Keep that backup and receipt until
+the refreshed installation has been checked.
+
+If apply is interrupted and the JSON error or lock message says recovery is
+required, do not start another apply. Recover the transaction named by its
+persistent receipt; omit the explicit path only when the synchronizer reports a
+single locked transaction for this installation root:
+
+```bash
+python3 scripts/sync_install_tree.py --install-root ~/.agents/skills --recover \
+  --recovery-receipt ~/.agents/skill-backups/netops-install-.../sync-receipt.json
+```
+
+Recovery inspects the recorded directory identities and the actual
+stage/live/backup topology, restores the pre-apply installation, and is safe to
+run again after it reports completion. An identity mismatch or ambiguous receipt
+fails closed for manual inspection instead of moving an unknown directory.
 
 `jsonschema` is only needed for the `--require-jsonschema` step, which validates the
 schemas and their examples against Draft 2020-12. It is a checking tool, not a
 runtime dependency, and it must never appear in `pyproject.toml`.
 
-Release artefacts go through a separate double build gate. You do not need it for a
-normal pull request, but run it before proposing a release, and note that the output
-directory must not already exist:
+After the clean release commit has its exact `v<version>` tag, run the
+publication-only gate before creating any in-repository artefact directory:
+
+```bash
+python3 scripts/release_check.py . --require-jsonschema --release-mode
+```
+
+Unlike the ordinary developer check, `--release-mode` intentionally rejects a dirty
+tree, an untagged commit, a tag that does not exactly match the package version,
+reuse of a version tag from another commit, and a release without meaningful dated
+Changelog evidence. Do not use this flag for normal branch or pull-request checks.
+
+Only after that clean tagged-tree gate passes do release artefacts go through the
+separate double build gate. The output directory must not already exist:
 
 ```bash
 python3 -m pip install "build==1.3.0" "setuptools==83.0.0"
@@ -208,8 +261,9 @@ fixing it.
 
 ## Language split
 
-- Chinese for `references/`, for `README.zh-CN.md` and for every user facing report
-  and prompt. The audience is a beginner operator reading in Chinese.
+- Chinese for `references/`, for `README.zh-CN.md`, user facing prompts and
+  conversations, and explicitly requested reports. The audience is a beginner
+  operator reading in Chinese.
 - English for `SKILL.md` bodies, code, comments, identifiers, schemas, `README.md`,
   commit messages and pull request descriptions. Skill frontmatter descriptions may
   carry a short Chinese trigger phrase list, since the router matches Chinese

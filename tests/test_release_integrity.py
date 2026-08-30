@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,12 +12,46 @@ from scripts.release_check import (
     _check_manifest_contract,
     _check_monitor_execution_gate,
     _check_packaging_contract,
+    _check_release_changelog,
+    _check_release_mode,
     _check_versions,
     _load_json_documents,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_git(root: Path, *arguments: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+
+
+def write_release_fixture(root: Path, *, meaningful: bool = True) -> None:
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "fixture"\nversion = "1.2.3"\n',
+        encoding="utf-8",
+    )
+    release_body = (
+        "### Changed\n\n- Added a meaningful release integrity fixture."
+        if meaningful
+        else "Nothing yet."
+    )
+    (root / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## [Unreleased]\n\nNothing yet.\n\n"
+        "## [1.2.3] - 2026-08-29\n\n"
+        f"{release_body}\n\n"
+        "[Unreleased]: https://example.test/compare/v1.2.3...HEAD\n"
+        "[1.2.3]: https://example.test/compare/v1.2.2...v1.2.3\n",
+        encoding="utf-8",
+    )
 
 
 class ReleaseIntegrityTests(unittest.TestCase):
@@ -61,6 +96,86 @@ class ReleaseIntegrityTests(unittest.TestCase):
             any("prune */*/.pytest_cache" in item for item in errors),
             errors,
         )
+
+    def test_manifest_gate_requires_agents_policy_in_sdist(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+            manifest = manifest.replace("include AGENTS.md\n", "", 1)
+            (root / "MANIFEST.in").write_text(manifest, encoding="utf-8")
+            errors = _check_manifest_contract(root)
+        self.assertTrue(any("include AGENTS.md" in item for item in errors), errors)
+
+    def test_release_mode_accepts_clean_exact_tag_with_release_evidence(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_release_fixture(root)
+            run_git(root, "init")
+            run_git(root, "config", "user.name", "NetOps Test")
+            run_git(root, "config", "user.email", "netops-test@example.test")
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-m", "release fixture")
+            run_git(root, "tag", "v1.2.3")
+            self.assertEqual(_check_release_mode(root), [])
+
+    def test_release_mode_rejects_dirty_tree_and_same_version_drift(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_release_fixture(root)
+            run_git(root, "init")
+            run_git(root, "config", "user.name", "NetOps Test")
+            run_git(root, "config", "user.email", "netops-test@example.test")
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-m", "release fixture")
+            run_git(root, "tag", "v1.2.3")
+
+            (root / "dirty.txt").write_text("not committed\n", encoding="utf-8")
+            dirty_errors = _check_release_mode(root)
+            self.assertTrue(any("worktree changes" in item for item in dirty_errors))
+
+            run_git(root, "add", "dirty.txt")
+            run_git(root, "commit", "-m", "same version drift")
+            drift_errors = _check_release_mode(root)
+            self.assertTrue(any("already tagged" in item for item in drift_errors))
+            self.assertTrue(any("only version tag" in item for item in drift_errors))
+
+    def test_release_changelog_requires_meaningful_version_evidence(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_release_fixture(root, meaningful=False)
+            errors = _check_release_changelog(root, "1.2.3")
+        self.assertTrue(any("meaningful bullet-point" in item for item in errors), errors)
+
+    def test_release_changelog_rejects_invalid_dates_and_duplicate_sections(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_release_fixture(root)
+            changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+            (root / "CHANGELOG.md").write_text(
+                changelog.replace("2026-08-29", "2026-99-99", 1),
+                encoding="utf-8",
+            )
+            date_errors = _check_release_changelog(root, "1.2.3")
+            self.assertTrue(
+                any("invalid ISO release date" in item for item in date_errors),
+                date_errors,
+            )
+
+            (root / "CHANGELOG.md").write_text(
+                changelog
+                + "\n## [Unreleased]\n\n- Duplicate unreleased section.\n"
+                + "\n## [1.2.3] - 2026-08-29\n\n- Duplicate release section.\n",
+                encoding="utf-8",
+            )
+            duplicate_errors = _check_release_changelog(root, "1.2.3")
+            self.assertTrue(
+                any("duplicate [Unreleased]" in item for item in duplicate_errors),
+                duplicate_errors,
+            )
+            self.assertTrue(
+                any("duplicate [1.2.3]" in item for item in duplicate_errors),
+                duplicate_errors,
+            )
 
     def test_ci_gate_requires_reproducible_builder_and_explicit_epoch(self):
         with tempfile.TemporaryDirectory() as raw:

@@ -18,6 +18,13 @@ A case must include:
 Cases must not contain real IP addresses, domains, node links, UUIDs,
 credentials, contacts, or account identifiers.
 
+## Example index / 案例索引
+
+- [`intermittent-shared-node.md`](intermittent-shared-node.md): compare shared components during intermittent multi-device failures.
+- [`dual-stack-tun.md`](dual-stack-tun.md): isolate IPv4/IPv6 and TUN path differences.
+- [`destination-refusal.md`](destination-refusal.md): distinguish path failure from destination-side rejection.
+- [`per-node-egress.md`](per-node-egress.md): classify and verify a per-node upstream exit without changing the host route.
+
 ## 简体中文
 
 案例不是 Skill，也不是硬编码诊断规则。每个案例只示范一件事：怎样用声明过的

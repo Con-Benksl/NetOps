@@ -9,7 +9,7 @@ import secrets
 import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus, unquote_plus, urlsplit, urlunsplit
+from urllib.parse import quote_plus, unquote, unquote_plus, urlsplit, urlunsplit
 
 
 UUID_RE = re.compile(
@@ -36,6 +36,11 @@ RELATIVE_DISCORD_PATH_RE = re.compile(
 RELATIVE_TELEGRAM_PATH_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9:/])(?P<prefix>/bot)[0-9]{3,}(?::|%3a)"
     r"[A-Za-z0-9_-]{8,}"
+)
+SUBSCRIPTION_PATH_TOKEN_RE = re.compile(
+    r"(?i)(?P<prefix>/(?:sub|subscribe|subscription)/)"
+    r"(?P<token>(?!<subscription-redacted>)"
+    r"[^/\s?#]+)"
 )
 REDACTION_MARKER_RE = re.compile(r"(?i)<(?:[a-z0-9-]+-)?redacted>")
 REDACTED_PARAMETER_RE = re.compile(
@@ -267,6 +272,10 @@ NON_SECRET_SEMANTIC_KEYS = {
     "credentials_present",
     "token_count",
 }
+SUBSCRIPTION_SECRET_KEY_RE = re.compile(
+    r"^(?:subscription|subscribe|sub)_(?:id|uuid|key|path|url|uri|link|endpoint|"
+    r"qr(?:_code|_payload|_url)?)$"
+)
 SENSITIVE_KEY_SEGMENTS = {
     "auth",
     "authorization",
@@ -571,6 +580,37 @@ def _is_sensitive_key(value: str | None) -> bool:
     )
 
 
+def _is_subscription_secret_key(value: str | None) -> bool:
+    """Recognize fields whose value is itself a subscription credential."""
+
+    return bool(value and SUBSCRIPTION_SECRET_KEY_RE.fullmatch(value))
+
+
+def _looks_like_subscription_path_token(value: str) -> bool:
+    """Distinguish opaque subscription tokens from ordinary documentation slugs."""
+
+    # This value is a URL path segment, not form data: a literal plus must stay
+    # a plus rather than becoming a space. Percent-encoded path separators or
+    # binary-looking bytes fail closed after the ordinary documentation-slug
+    # exception has been considered.
+    decoded = unquote(value)
+    if REDACTION_MARKER_RE.fullmatch(decoded):
+        return False
+    # Preserve only explicit documentation words and known documentation slugs.
+    # Everything else is a credential-shaped endpoint, regardless of length or
+    # alphabet; token length and lowercase punctuation are not secrecy boundaries.
+    if decoded in {
+        "docs",
+        "documentation",
+        "getting-started-guide",
+        "guide",
+        "help",
+        "readme",
+    }:
+        return False
+    return bool(value)
+
+
 def _is_sensitive_header_name(value: str | None) -> bool:
     if not value:
         return False
@@ -786,6 +826,15 @@ class Redactor:
             self._labels[key] = f"<{kind}-{digest}>"
         return self._labels[key]
 
+    def _redact_subscription_path(self, value: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            if not _looks_like_subscription_path_token(match.group("token")):
+                return match.group(0)
+            self.actions.add("subscription-credential")
+            return match.group("prefix") + "<subscription-redacted>"
+
+        return SUBSCRIPTION_PATH_TOKEN_RE.sub(replace, value)
+
     def _redact_url(
         self,
         value: str,
@@ -859,6 +908,8 @@ class Redactor:
                 "/bot<token-redacted>",
                 path_text,
             )
+
+        path_text = self._redact_subscription_path(path_text)
 
         # The HTTP request target is also embedded in absolute observation URLs.
         # Apply the same conservative path rules independent of hostname so a
@@ -1079,6 +1130,11 @@ class Redactor:
             if result != value:
                 self.actions.add("url-path-secret")
             value = result
+
+        result = self._redact_subscription_path(value)
+        if result != value:
+            self.actions.add("url-path-secret")
+        value = result
 
         if not self.include_network_identifiers:
             result = NETWORK_COMMAND_LINE_RE.sub(
@@ -1324,6 +1380,9 @@ class Redactor:
         if _is_sensitive_header_name(normalized_key):
             self.actions.add("sensitive-header")
             return None
+        if _is_subscription_secret_key(normalized_key):
+            self.actions.add("subscription-credential")
+            return "<redacted>"
         if _is_sensitive_key(normalized_key):
             self.actions.add("secret-key")
             return "<redacted>"
@@ -1497,6 +1556,10 @@ class Redactor:
                     continue
                 if _is_sensitive_header_name(normalized_child):
                     self.actions.add("sensitive-header")
+                    continue
+                if _is_subscription_secret_key(normalized_child):
+                    self.actions.add("subscription-credential")
+                    result[child_key] = "<redacted>"
                     continue
                 if _is_sensitive_key(normalized_child):
                     self.actions.add("secret-key")

@@ -14,7 +14,33 @@ this work is reconciled with the published repository.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- Formal scans now persist only the machine-readable JSON bundle by default;
+  conversational conclusions stay in the active Agent session, and standalone
+  Markdown reports are explicit exports.
+- Control-channel consent now uses one execution card bound to an exact card ID,
+  scope and residual-risk list. Any material scope or risk change invalidates the
+  prior authorization.
+
+### Fixed
+
+- Treat subscription endpoints and QR payloads as credentials, including generic
+  `/sub`, `/subscribe` and `/subscription` token paths and one encoded layer, while
+  retaining ordinary documentation URLs.
+- Keep control-channel decisions, exact-plan recovery mechanics and execution-card
+  confirmation in their designated single sources instead of conflicting runbook
+  copies.
+- Include `AGENTS.md` in source distributions so the packaged full test suite has
+  the same contributor-policy input as a repository checkout.
+- Add a publication-only release integrity mode that rejects dirty or incorrectly
+  tagged source trees, same-version tag drift, invalid or duplicate Changelog
+  sections and incomplete release evidence without making ordinary developer
+  validation require a clean tagged checkout.
+- Add a dry-run-by-default global Skill synchronizer that stages only current
+  Git-tracked regular files and transactionally refreshes the root plus five flat
+  installations with content-bound confirmation, a durable per-move journal,
+  persistent backup, automatic rollback and idempotent interrupted-apply recovery.
 
 ## [0.5.1] - 2026-08-02
 

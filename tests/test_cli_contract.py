@@ -74,7 +74,7 @@ class CliContractTests(unittest.TestCase):
             "authorized", inspect.signature(monitor.remove_monitor).parameters
         )
 
-    def test_scan_output_cannot_overwrite_report_at_same_path(self):
+    def test_scan_output_must_not_use_a_markdown_path(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
         with tempfile.TemporaryDirectory() as temporary:
             for suffix in (".md", ".MD", ".Md"):
@@ -84,39 +84,35 @@ class CliContractTests(unittest.TestCase):
                         cli._write_scan(bundle, str(output))
                     self.assertFalse(output.exists())
 
-    def test_scan_output_and_report_are_distinct(self):
+    def test_scan_writes_only_one_persisted_json_bundle(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
         with tempfile.TemporaryDirectory() as temporary:
-            result = cli._write_scan(bundle, str(Path(temporary) / "result.json"))
-            self.assertNotEqual(result["bundle"], result["report"])
-            self.assertTrue(Path(result["bundle"]).is_file())
-            self.assertTrue(Path(result["report"]).is_file())
-            if os.name != "nt":
-                self.assertEqual(
-                    Path(result["report"]).stat().st_mode & 0o777,
-                    0o600,
-                )
+            output = Path(temporary) / "result.json"
+            report = output.with_suffix(".md")
+            result = cli._write_scan(bundle, str(output))
 
-    def test_scan_refuses_to_overwrite_bundle_or_derived_report(self):
+            self.assertEqual(set(result), {"bundle", "run_id"})
+            self.assertEqual(Path(result["bundle"]), output)
+            self.assertEqual(result["run_id"], bundle.run_id)
+            self.assertTrue(output.is_file())
+            self.assertFalse(report.exists())
+            persisted = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["run_id"], result["run_id"])
+            if os.name != "nt":
+                self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+    def test_scan_refuses_to_overwrite_bundle(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             output = root / "result.json"
-            report = root / "result.md"
-            report.write_text("sentinel", encoding="utf-8")
-            with self.assertRaisesRegex(FileExistsError, "derived Markdown report"):
-                cli._write_scan(bundle, str(output))
-            self.assertEqual(report.read_text(encoding="utf-8"), "sentinel")
-            self.assertFalse(output.exists())
-
-            report.unlink()
             output.write_text("sentinel", encoding="utf-8")
             with self.assertRaisesRegex(FileExistsError, "diagnostic bundle"):
                 cli._write_scan(bundle, str(output))
             self.assertEqual(output.read_text(encoding="utf-8"), "sentinel")
 
     @unittest.skipIf(os.name == "nt", "symlink creation is not generally available")
-    def test_scan_and_report_outputs_reject_dangling_symlinks(self):
+    def test_scan_output_rejects_a_dangling_symlink(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -127,15 +123,7 @@ class CliContractTests(unittest.TestCase):
                 cli._write_scan(bundle, str(output))
             self.assertFalse(missing.exists())
 
-            output.unlink()
-            report = root / "result.md"
-            report.symlink_to(root / "missing-report.md")
-            with self.assertRaisesRegex(FileExistsError, "derived Markdown report"):
-                cli._write_scan(bundle, str(output))
-            self.assertFalse((root / "missing-report.md").exists())
-            self.assertFalse(output.exists())
-
-    def test_report_is_rendered_from_persisted_sanitized_bundle(self):
+    def test_persisted_scan_json_is_redacted_without_creating_a_report(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"])
         bundle.observations.append(
             Observation(
@@ -147,13 +135,27 @@ class CliContractTests(unittest.TestCase):
             )
         )
         with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "result.json"
             result = cli._write_scan(
-                bundle, str(Path(temporary) / "result.json")
+                bundle, str(output)
             )
-            report = Path(result["report"]).read_text(encoding="utf-8")
             persisted = Path(result["bundle"]).read_text(encoding="utf-8")
-        self.assertNotIn("REPORT_SECRET", report)
-        self.assertNotIn("REPORT_SECRET", persisted)
+            self.assertNotIn("REPORT_SECRET", persisted)
+            self.assertNotIn("report", result)
+            self.assertFalse(output.with_suffix(".md").exists())
+
+    def test_existing_sibling_markdown_file_is_not_touched(self):
+        bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "result.json"
+            report = output.with_suffix(".md")
+            report.write_text("sentinel", encoding="utf-8")
+
+            result = cli._write_scan(bundle, str(output))
+
+            self.assertEqual(set(result), {"bundle", "run_id"})
+            self.assertTrue(output.is_file())
+            self.assertEqual(report.read_text(encoding="utf-8"), "sentinel")
 
     @patch("netops_core.cli.scan_client")
     def test_scan_conflict_is_rejected_before_any_probe(self, scan_client):
@@ -168,23 +170,8 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), "sentinel")
         scan_client.assert_not_called()
 
-    @patch("netops_core.cli.scan_client")
-    def test_derived_report_conflict_is_rejected_before_any_probe(self, scan_client):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "result.json"
-            report = output.with_suffix(".md")
-            report.write_text("sentinel", encoding="utf-8")
-            args = cli.build_parser().parse_args(
-                ["scan", "client", "--output", str(output)]
-            )
-            with self.assertRaisesRegex(FileExistsError, "derived Markdown report"):
-                cli.execute(args)
-            self.assertFalse(output.exists())
-            self.assertEqual(report.read_text(encoding="utf-8"), "sentinel")
-        scan_client.assert_not_called()
-
     @patch("netops_core.cli.scan_client", side_effect=RuntimeError("probe failed"))
-    def test_failed_scan_releases_both_output_reservations(self, _scan_client):
+    def test_failed_scan_releases_output_reservation_without_a_report(self, _scan_client):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "result.json"
             report = output.with_suffix(".md")
@@ -201,47 +188,50 @@ class CliContractTests(unittest.TestCase):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "result.json"
-            victim = Path(temporary) / "victim.md"
+            victim = Path(temporary) / "victim.json"
             victim.write_text("sentinel", encoding="utf-8")
-            reservations = cli._reserve_scan_outputs("node", str(output))
-            report = output.with_suffix(".md")
-            report.unlink()
-            report.symlink_to(victim)
+            reservation = cli._reserve_scan_output("node", str(output))
+            output.unlink()
+            output.symlink_to(victim)
 
             with self.assertRaisesRegex(FileExistsError, "replaced"):
                 cli._write_scan(
                     bundle,
                     str(output),
-                    reservations=reservations,
+                    reservation=reservation,
                 )
 
             self.assertEqual(victim.read_text(encoding="utf-8"), "sentinel")
-            self.assertFalse(output.exists())
-            self.assertTrue(report.is_symlink())
+            self.assertTrue(output.is_symlink())
 
-    def test_partial_scan_publish_removes_its_own_json_and_reservation(self):
+    def test_scan_publish_failure_releases_its_reservation(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
-        original_publish = cli._publish_reserved_output
-        calls = 0
-
-        def fail_second_publish(staged, destination, reservation):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise OSError("simulated report publish failure")
-            return original_publish(staged, destination, reservation)
 
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "result.json"
             report = output.with_suffix(".md")
             with patch(
                 "netops_core.cli._publish_reserved_output",
-                side_effect=fail_second_publish,
+                side_effect=OSError("simulated bundle publish failure"),
             ):
-                with self.assertRaisesRegex(OSError, "report publish failure"):
+                with self.assertRaisesRegex(OSError, "bundle publish failure"):
                     cli._write_scan(bundle, str(output))
             self.assertFalse(output.exists())
             self.assertFalse(report.exists())
+
+    @patch(
+        "netops_core.cli.load_bundle",
+        side_effect=ValueError("invalid persisted bundle"),
+    )
+    def test_scan_reload_validation_failure_is_not_published(self, load_bundle):
+        bundle = DiagnosticBundle(mode="node", vantage_points=["test"]).finish()
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "result.json"
+            with self.assertRaisesRegex(ValueError, "invalid persisted bundle"):
+                cli._write_scan(bundle, str(output))
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".md").exists())
+        load_bundle.assert_called_once()
 
     @unittest.skipIf(os.name == "nt", "chmod branch is POSIX-only")
     def test_new_text_output_is_removed_if_pre_publish_hardening_fails(self):

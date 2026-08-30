@@ -14,7 +14,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
-from urllib.parse import unquote_plus, urlsplit
+from urllib.parse import unquote, unquote_plus, urlsplit
 
 from . import BUNDLE_SCHEMA_VERSION
 from .models import DiagnosticBundle, load_bundle, utc_now, validate_bundle_data
@@ -244,6 +244,11 @@ _RESIDUAL_SECRET_URL_RE = re.compile(
     r"api\.telegram\.org/bot(?!<token-redacted>)[^/\s?#]+"
     r")"
 )
+_RESIDUAL_SUBSCRIPTION_PATH_TOKEN_RE = re.compile(
+    r"(?i)(?P<prefix>/(?:sub|subscribe|subscription)/)"
+    r"(?P<token>(?!<subscription-redacted>)"
+    r"[^/\s?#]+)"
+)
 _RESIDUAL_RELATIVE_PROVIDER_PATH_RE = re.compile(
     r"(?ix)(?<![A-Za-z0-9:/])(?:"
     r"/services/(?:[^/\s?#]+/){2}(?!<webhook-redacted>)[^/\s?#]+|"
@@ -282,6 +287,31 @@ _RESIDUAL_SECRET_ASSIGNMENT_RE = re.compile(
 )
 
 
+def _looks_like_residual_subscription_path_token(value: str) -> bool:
+    decoded = unquote(value)
+    if re.fullmatch(
+        r"(?i)<(?:[a-z0-9-]+-)?redacted>", decoded
+    ):
+        return False
+    if decoded in {
+        "docs",
+        "documentation",
+        "getting-started-guide",
+        "guide",
+        "help",
+        "readme",
+    }:
+        return False
+    return bool(value)
+
+
+def _has_residual_subscription_endpoint(value: str) -> bool:
+    return any(
+        _looks_like_residual_subscription_path_token(match.group("token"))
+        for match in _RESIDUAL_SUBSCRIPTION_PATH_TOKEN_RE.finditer(value)
+    )
+
+
 def _string_has_residual_credential_once(value: str) -> bool:
     if any(
         pattern.search(value)
@@ -305,6 +335,8 @@ def _string_has_residual_credential_once(value: str) -> bool:
             _RESIDUAL_SECRET_ASSIGNMENT_RE,
         )
     ):
+        return True
+    if _has_residual_subscription_endpoint(value):
         return True
     for match in _RESIDUAL_BASIC_RE.finditer(value):
         token = match.group("token")
@@ -367,7 +399,7 @@ def _residual_credential_path(value: Any) -> str | None:
                     return f"{path}.{raw_key}"
             for child_key, child in reversed(list(item.items())):
                 child_path = f"{path}.{child_key}"
-                if isinstance(child_key, str) and _RESIDUAL_PROVIDER_TOKEN_RE.search(
+                if isinstance(child_key, str) and _string_has_residual_credential(
                     child_key
                 ):
                     return f"{path}.<key>"
@@ -463,6 +495,10 @@ _RESIDUAL_SENSITIVE_KEYS = {
     "x_api_key",
 }
 _RESIDUAL_NON_SECRET_KEYS = {"credentials_present", "token_count"}
+_RESIDUAL_SUBSCRIPTION_SECRET_KEY_RE = re.compile(
+    r"^(?:subscription|subscribe|sub)_(?:id|uuid|key|path|url|uri|link|endpoint|"
+    r"qr(?:_code|_payload|_url)?)$"
+)
 _RESIDUAL_SECRET_SEGMENTS = {
     "auth",
     "authorization",
@@ -510,7 +546,8 @@ def _residual_sensitive_key(value: str) -> bool:
     if not value or value in _RESIDUAL_NON_SECRET_KEYS:
         return False
     return (
-        value in _RESIDUAL_SENSITIVE_KEYS
+        bool(_RESIDUAL_SUBSCRIPTION_SECRET_KEY_RE.fullmatch(value))
+        or value in _RESIDUAL_SENSITIVE_KEYS
         or value.endswith(_RESIDUAL_SECRET_SUFFIXES)
         or bool(set(value.split("_")) & _RESIDUAL_SECRET_SEGMENTS)
         or "private_key" in value

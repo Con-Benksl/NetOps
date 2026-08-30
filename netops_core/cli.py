@@ -43,7 +43,6 @@ from .monitor import (
     remove_monitor,
     run_sample,
 )
-from .report import render_report
 from .redaction import Redactor
 from .scanner import (
     compare_bundles,
@@ -146,55 +145,41 @@ def _publish_reserved_output(
     return staged_identity
 
 
-def _scan_output_candidates(mode: str, output: str | None) -> tuple[Path, Path]:
+def _scan_output_candidate(mode: str, output: str | None) -> Path:
     destination = Path(output).expanduser() if output else _default_output(mode)
     candidate_json = _absolute_local_path(destination)
-    candidate_report = candidate_json.with_suffix(".md")
-    if candidate_report == candidate_json or candidate_json.suffix.casefold() == ".md":
+    if candidate_json.suffix.casefold() == ".md":
         raise ValueError(
             "--output is the diagnostic JSON path and must not end in .md"
         )
-    return candidate_json, candidate_report
+    return candidate_json
 
 
-def _reserve_scan_outputs(
+def _reserve_scan_output(
     mode: str, output: str | None
-) -> tuple[tuple[Path, tuple[int, int]], tuple[Path, tuple[int, int]]]:
-    candidate_json, candidate_report = _scan_output_candidates(mode, output)
-    json_path, json_reservation = _reserve_new_output(
-        candidate_json, label="diagnostic bundle"
+) -> tuple[Path, tuple[int, int]]:
+    return _reserve_new_output(
+        _scan_output_candidate(mode, output),
+        label="diagnostic bundle",
     )
-    try:
-        report_path, report_reservation = _reserve_new_output(
-            candidate_report, label="derived Markdown report"
-        )
-    except BaseException:
-        _remove_empty_reservation(json_path, json_reservation)
-        raise
-    return (json_path, json_reservation), (report_path, report_reservation)
 
 
-def _release_scan_reservations(
-    reservations: tuple[
-        tuple[Path, tuple[int, int]], tuple[Path, tuple[int, int]]
-    ]
+def _release_scan_reservation(
+    reservation: tuple[Path, tuple[int, int]],
 ) -> None:
-    for path, identity in reservations:
-        _remove_empty_reservation(path, identity)
+    _remove_empty_reservation(*reservation)
 
 
 def _write_scan(
     bundle: DiagnosticBundle,
     output: str | None,
     *,
-    reservations: tuple[
-        tuple[Path, tuple[int, int]], tuple[Path, tuple[int, int]]
-    ]
-    | None = None,
+    reservation: tuple[Path, tuple[int, int]] | None = None,
 ) -> dict[str, str]:
-    reservations = reservations or _reserve_scan_outputs(bundle.mode, output)
-    (json_path, json_reservation), (report_path, report_reservation) = reservations
-    published: list[tuple[Path, tuple[int, int]]] = []
+    json_path, json_reservation = reservation or _reserve_scan_output(
+        bundle.mode, output
+    )
+    published_identity: tuple[int, int] | None = None
     try:
         with tempfile.TemporaryDirectory(
             prefix=".netops-scan-",
@@ -202,43 +187,24 @@ def _write_scan(
         ) as staging_directory:
             staging_root = Path(staging_directory)
             staged_json = staging_root / json_path.name
-            staged_report = staging_root / report_path.name
             write_bundle(staged_json, bundle)
             persisted_bundle = load_bundle(staged_json)
-            _write_text_atomic(staged_report, render_report(persisted_bundle))
 
-            # Validate the pair before publishing either member. Each replace
+            # Publish only the validated machine-readable bundle. The replace
             # targets the raw absolute directory entry, never a resolved
             # symlink target.
             _assert_reservation(json_path, json_reservation)
-            _assert_reservation(report_path, report_reservation)
-            published.append(
-                (
-                    json_path,
-                    _publish_reserved_output(
-                        staged_json,
-                        json_path,
-                        json_reservation,
-                    ),
-                )
-            )
-            published.append(
-                (
-                    report_path,
-                    _publish_reserved_output(
-                        staged_report,
-                        report_path,
-                        report_reservation,
-                    ),
-                )
+            published_identity = _publish_reserved_output(
+                staged_json,
+                json_path,
+                json_reservation,
             )
     except BaseException:
-        for path, identity in published:
-            _remove_owned_output(path, identity)
+        if published_identity is not None:
+            _remove_owned_output(json_path, published_identity)
         _remove_empty_reservation(json_path, json_reservation)
-        _remove_empty_reservation(report_path, report_reservation)
         raise
-    return {"bundle": str(json_path), "report": str(report_path), "run_id": bundle.run_id}
+    return {"bundle": str(json_path), "run_id": persisted_bundle.run_id}
 
 
 def _configure_utf8_stdio() -> None:
@@ -728,7 +694,7 @@ def _entry_script() -> Path:
 
 def execute(args: argparse.Namespace) -> int:
     if args.command == "scan":
-        reservations = _reserve_scan_outputs(args.scan_mode, args.output)
+        reservation = _reserve_scan_output(args.scan_mode, args.output)
         try:
             selected_tool = getattr(args, "tool", None)
             selected_tools = [selected_tool] if selected_tool else []
@@ -788,11 +754,11 @@ def execute(args: argparse.Namespace) -> int:
                 _write_scan(
                     result,
                     args.output,
-                    reservations=reservations,
+                    reservation=reservation,
                 )
             )
         finally:
-            _release_scan_reservations(reservations)
+            _release_scan_reservation(reservation)
         return 0
 
     if args.command == "tools":

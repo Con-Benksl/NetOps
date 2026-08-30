@@ -30,12 +30,14 @@ REQUIRED_SDIST_FILES = (
     "SECURITY.md",
     "CODE_OF_CONDUCT.md",
     "LICENSE",
+    "AGENTS.md",
     "SKILL.md",
     "pyproject.toml",
     "MANIFEST.in",
     ".github/workflows/test.yml",
     "scripts/installed_smoke.py",
     "scripts/package_smoke.py",
+    "scripts/sync_install_tree.py",
 )
 REQUIRED_SDIST_DIRECTORIES = (
     "agents",

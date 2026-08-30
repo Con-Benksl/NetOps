@@ -134,6 +134,22 @@ class PackageSmokeArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "forbidden"):
                 _validate_sdist_layout(source)
 
+    def test_layout_requires_agents_policy_used_by_the_sdist_test_suite(self):
+        self.assertIn("AGENTS.md", REQUIRED_SDIST_FILES)
+        with tempfile.TemporaryDirectory() as raw:
+            source = Path(raw) / "package"
+            source.mkdir()
+            for relative in REQUIRED_SDIST_DIRECTORIES:
+                (source / relative).mkdir(parents=True, exist_ok=True)
+                (source / relative / ".keep").write_text("kept\n", encoding="utf-8")
+            for relative in REQUIRED_SDIST_FILES:
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("content\n", encoding="utf-8")
+            (source / "AGENTS.md").unlink()
+            with self.assertRaisesRegex(RuntimeError, "AGENTS.md"):
+                _validate_sdist_layout(source)
+
     def test_artifact_module_parity_accepts_identical_modules(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

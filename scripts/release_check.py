@@ -5,13 +5,17 @@ import argparse
 import compileall
 import inspect
 import re
+import subprocess
 import sys
 import tempfile
+from collections import Counter
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
 
 VERSION_LINE = re.compile(r'^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$', re.MULTILINE)
+VERSION_TAG = re.compile(r"^v([0-9]+\.[0-9]+\.[0-9]+)$")
 EXAMPLE_SCHEMAS = {
     "examples/change-spec.example.json": "schemas/change-spec.schema.json",
     "examples/fleet.example.json": "schemas/fleet.schema.json",
@@ -37,6 +41,7 @@ REQUIRED_MANIFEST_LINES = (
     "include SECURITY.md",
     "include CODE_OF_CONDUCT.md",
     "include LICENSE",
+    "include AGENTS.md",
     "include SKILL.md",
     "include pyproject.toml",
     "include MANIFEST.in",
@@ -117,6 +122,187 @@ def _check_versions(root: Path) -> list[str]:
         errors.append("scanner user agent must derive from the package version")
     if re.search(r"NetOps/0\.[0-9]+", scanner_text):
         errors.append("scanner contains a stale hard-coded pre-release user agent")
+    return errors
+
+
+def _git_output(root: Path, *arguments: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"git command could not run: {exc}") from exc
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout).strip()
+        if len(detail) > 1_000:
+            detail = detail[-1_000:]
+        raise RuntimeError(
+            f"git {' '.join(arguments)} failed with exit {completed.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    return completed.stdout.strip()
+
+
+def _changelog_sections(text: str) -> dict[str, tuple[str | None, str]]:
+    headings = list(
+        re.finditer(
+            r"^## \[([^\]]+)\](?: - (\d{4}-\d{2}-\d{2}))?\s*$",
+            text,
+            flags=re.MULTILINE,
+        )
+    )
+    sections: dict[str, tuple[str | None, str]] = {}
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        sections[heading.group(1)] = (heading.group(2), text[heading.end() : end].strip())
+    return sections
+
+
+def _meaningful_changelog_body(body: str) -> bool:
+    substantive_lines = [
+        line.strip()
+        for line in body.splitlines()
+        if line.strip() and not line.lstrip().startswith("### ")
+    ]
+    return (
+        any(line.startswith("- ") and len(line[2:].strip()) >= 12 for line in substantive_lines)
+        and " ".join(substantive_lines).casefold() not in {"nothing yet.", "nothing yet"}
+    )
+
+
+def _check_release_changelog(root: Path, version: str) -> list[str]:
+    path = root / "CHANGELOG.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [f"CHANGELOG.md: cannot read release evidence: {exc}"]
+
+    errors: list[str] = []
+    labels = re.findall(
+        r"^## \[([^\]]+)\](?: - \d{4}-\d{2}-\d{2})?\s*$",
+        text,
+        flags=re.MULTILINE,
+    )
+    for label, count in sorted(Counter(labels).items()):
+        if count > 1:
+            errors.append(
+                f"CHANGELOG.md: duplicate [{label}] sections are not allowed"
+            )
+    sections = _changelog_sections(text)
+    unreleased = sections.get("Unreleased")
+    if unreleased is None:
+        errors.append("CHANGELOG.md: release mode requires an [Unreleased] section")
+    elif unreleased[0] is not None:
+        errors.append("CHANGELOG.md: [Unreleased] must not have a release date")
+
+    released = sections.get(version)
+    if released is None:
+        errors.append(
+            f"CHANGELOG.md: release mode requires a dated [{version}] section"
+        )
+    else:
+        release_date, body = released
+        if release_date is None:
+            errors.append(f"CHANGELOG.md: [{version}] must have an ISO release date")
+        else:
+            try:
+                date.fromisoformat(release_date)
+            except ValueError:
+                errors.append(
+                    f"CHANGELOG.md: [{version}] has an invalid ISO release date "
+                    f"{release_date!r}"
+                )
+        if not _meaningful_changelog_body(body):
+            errors.append(
+                f"CHANGELOG.md: [{version}] must contain meaningful bullet-point "
+                "release evidence"
+            )
+
+    unreleased_link = re.search(
+        rf"^\[Unreleased\]:\s+\S+/compare/v{re.escape(version)}\.\.\.HEAD\s*$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if unreleased_link is None:
+        errors.append(
+            "CHANGELOG.md: [Unreleased] comparison must start at "
+            f"the release tag v{version}"
+        )
+    version_link = re.search(
+        rf"^\[{re.escape(version)}\]:\s+\S*(?:\.\.\.|/tag/)v{re.escape(version)}\s*$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if version_link is None:
+        errors.append(
+            f"CHANGELOG.md: [{version}] link must resolve to release tag v{version}"
+        )
+    return errors
+
+
+def _check_release_mode(root: Path) -> list[str]:
+    """Validate a clean, exactly tagged source tree immediately before publishing."""
+
+    try:
+        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [f"release mode: cannot read pyproject.toml: {exc}"]
+    version_match = VERSION_LINE.search(pyproject)
+    if version_match is None:
+        return ["release mode: pyproject.toml has no strict semantic version"]
+    version = version_match.group(1)
+    expected_tag = f"v{version}"
+    errors: list[str] = []
+
+    try:
+        repository_root = Path(_git_output(root, "rev-parse", "--show-toplevel")).resolve()
+        if repository_root != root.resolve():
+            errors.append(
+                "release mode: root must be the Git repository root "
+                f"({repository_root})"
+            )
+        status = _git_output(root, "status", "--porcelain=v1", "--untracked-files=all")
+        if status:
+            errors.append(
+                "release mode: tracked and untracked worktree changes must be committed "
+                "or removed before publishing"
+            )
+        head = _git_output(root, "rev-parse", "HEAD")
+        tags = _git_output(root, "tag", "--list").splitlines()
+        version_tags_at_head = {
+            tag
+            for tag in _git_output(root, "tag", "--points-at", "HEAD").splitlines()
+            if VERSION_TAG.fullmatch(tag)
+        }
+        if expected_tag not in tags:
+            errors.append(
+                f"release mode: HEAD must carry exact version tag {expected_tag}"
+            )
+        else:
+            tagged_commit = _git_output(root, "rev-list", "-n", "1", expected_tag)
+            if tagged_commit != head:
+                errors.append(
+                    f"release mode: version {version} is already tagged at "
+                    f"{tagged_commit[:12]}; refusing same-version source drift at "
+                    f"{head[:12]}"
+                )
+        if version_tags_at_head != {expected_tag}:
+            found = ", ".join(sorted(version_tags_at_head)) or "none"
+            errors.append(
+                f"release mode: version {version} must align with the only version tag "
+                f"at HEAD ({expected_tag}); found {found}"
+            )
+    except RuntimeError as exc:
+        errors.append(f"release mode: {exc}")
+
+    errors.extend(_check_release_changelog(root, version))
     return errors
 
 
@@ -562,6 +748,14 @@ def main(argv: list[str] | None = None) -> int:
             "examples with Draft 2020-12"
         ),
     )
+    parser.add_argument(
+        "--release-mode",
+        action="store_true",
+        help=(
+            "Add publication-only Git and changelog gates: require a clean tree, "
+            "an exact v<version> tag at HEAD, and complete release evidence"
+        ),
+    )
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     errors = [
@@ -576,6 +770,8 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if args.require_jsonschema:
         errors.extend(_check_json_schemas(root))
+    if args.release_mode:
+        errors.extend(_check_release_mode(root))
     previous_cache_prefix = sys.pycache_prefix
     with tempfile.TemporaryDirectory(prefix="netops-release-pycache-") as cache:
         sys.pycache_prefix = cache
@@ -593,6 +789,7 @@ def main(argv: list[str] | None = None) -> int:
         "release integrity: JSON, versions, packaging/manifest/CI, examples, change "
         "authorization and unreleased monitor gates, Python compilation"
         + (", and Draft 2020-12 schemas" if args.require_jsonschema else "")
+        + (", and publication Git/changelog gates" if args.release_mode else "")
         + " passed"
     )
     return 0
