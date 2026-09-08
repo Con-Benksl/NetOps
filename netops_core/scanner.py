@@ -56,22 +56,6 @@ PROXY_DEFAULT_PORTS = {
 }
 _PROXY_FROM_ENVIRONMENT = object()
 USER_AGENT = f"NetOps/{__version__}"
-NETWORK_PROCESS_ENV_KEYS = {
-    "PATH",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "SYSTEMROOT",
-    "SystemRoot",
-    "WINDIR",
-    "COMSPEC",
-    "PATHEXT",
-    "TEMP",
-    "TMP",
-    "TMPDIR",
-}
 NETWORK_PROXY_ENV_KEYS = (PROXY_ENV_NAMES - {"NETOPS_PROXY_URL"}) | {
     "NO_PROXY",
     "no_proxy",

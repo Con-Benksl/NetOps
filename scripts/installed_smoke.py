@@ -97,20 +97,24 @@ def _check_monitor_api_gates(executable: str, *, cwd: Path) -> None:
         for index, key in enumerate(real_paths)
     }
 
-    def command_was_called(*_args, **_kwargs):
-        raise AssertionError("monitor smoke attempted to execute a scheduler command")
+    for name in (
+        "_install_monitor_unreleased",
+        "_monitor_status_unreleased",
+        "_remove_monitor_unreleased",
+        "_run_scheduler_command",
+    ):
+        if hasattr(monitor_module, name):
+            raise RuntimeError(
+                f"installed dormant scheduler implementation is reachable: {name}"
+            )
 
-    with (
-        patch.object(
-            monitor_module,
-            "_monitor_paths",
-            return_value=isolated_paths,
-        ),
-        patch.object(
-            monitor_module,
-            "run_command",
-            side_effect=command_was_called,
-        ),
+    with patch.object(
+        monitor_module,
+        "_monitor_paths",
+        return_value=isolated_paths,
+    ), patch(
+        "subprocess.Popen",
+        side_effect=AssertionError("monitor review attempted to start a process"),
     ):
         plan = monitor_module.build_install_plan(
             entry_script=executable,
@@ -157,25 +161,6 @@ def _check_monitor_api_gates(executable: str, *, cwd: Path) -> None:
         _expect_monitor_api_unavailable(
             lambda: monitor_module.remove_monitor(
                 scope="user", dry_run=False
-            )
-        )
-        _expect_monitor_api_unavailable(
-            lambda: monitor_module._install_monitor_unreleased(
-                {}, authorized=True, dry_run=False
-            )
-        )
-        _expect_monitor_api_unavailable(
-            lambda: monitor_module._remove_monitor_unreleased(
-                scope="invalid", authorized=True, dry_run=False
-            )
-        )
-        _expect_monitor_api_unavailable(
-            lambda: monitor_module._monitor_status_unreleased(scope="invalid")
-        )
-        _expect_monitor_api_unavailable(
-            lambda: monitor_module._run_scheduler_command(
-                ["systemctl", "disable", "--now", "netops-monitor.timer"],
-                timeout=1,
             )
         )
 

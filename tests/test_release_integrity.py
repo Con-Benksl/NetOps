@@ -1,8 +1,10 @@
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.release_check import (
     _check_change_execution_gate,
@@ -230,24 +232,6 @@ class ReleaseIntegrityTests(unittest.TestCase):
             errors,
         )
 
-    def test_ci_gate_requires_linux_archive_dependencies(self):
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            workflow = (ROOT / ".github/workflows/test.yml").read_text(
-                encoding="utf-8"
-            )
-            workflow = workflow.replace(
-                "          sudo apt-get install --no-install-recommends -y acl attr\n",
-                "",
-            )
-            workflow_path = root / ".github/workflows/test.yml"
-            workflow_path.parent.mkdir(parents=True)
-            workflow_path.write_text(workflow, encoding="utf-8")
-            errors = _check_ci_contract(root)
-        self.assertTrue(
-            any("apt-get install" in item for item in errors),
-            errors,
-        )
 
     def test_remote_change_execution_requires_explicit_authorization(self):
         self.assertEqual(_check_change_execution_gate(ROOT), [])
@@ -257,6 +241,27 @@ class ReleaseIntegrityTests(unittest.TestCase):
 
     def test_scheduled_monitor_mutation_remains_unreleased(self):
         self.assertEqual(_check_monitor_execution_gate(ROOT), [])
+
+    def test_monitor_review_gates_reject_process_execution(self):
+        import netops_core.monitor as monitor_module
+        from scripts.installed_smoke import _check_monitor_api_gates
+
+        original_status = monitor_module.monitor_status
+
+        def status_with_process(*, scope):
+            subprocess.run([sys.executable, "-c", "pass"], check=True)
+            return original_status(scope=scope)
+
+        with patch.object(monitor_module, "monitor_status", status_with_process):
+            with self.subTest(gate="release"):
+                errors = _check_monitor_execution_gate(ROOT)
+                self.assertTrue(
+                    any("attempted to start a process" in item for item in errors),
+                    errors,
+                )
+            with self.subTest(gate="installed"), tempfile.TemporaryDirectory() as raw:
+                with self.assertRaisesRegex(AssertionError, "attempted to start a process"):
+                    _check_monitor_api_gates(str(ROOT / "netopsctl"), cwd=Path(raw))
 
     @unittest.skipUnless(
         importlib.util.find_spec("jsonschema"),

@@ -14,7 +14,7 @@ import threading
 import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable, Iterator
+from typing import Any, BinaryIO, Iterator
 
 
 MAX_CAPTURE_CHARS = 64_000
@@ -286,17 +286,6 @@ def trusted_system_environment(
         if value:
             result["SSH_AUTH_SOCK"] = value
     return result
-
-
-def command_exists(command: str) -> bool:
-    return shutil.which(command) is not None
-
-
-def first_command(candidates: Iterable[str]) -> str | None:
-    for candidate in candidates:
-        if command_exists(candidate):
-            return candidate
-    return None
 
 
 def _create_windows_kill_job() -> int:
@@ -692,10 +681,3 @@ def read_text_limited(path: str | Path, limit: int = MAX_CAPTURE_CHARS) -> str:
         )
     except (OSError, ValueError):
         return ""
-
-
-def executable_path(path: str | Path) -> str | None:
-    candidate = Path(path)
-    if candidate.is_file() and os.access(candidate, os.X_OK):
-        return str(candidate)
-    return None

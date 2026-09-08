@@ -13,16 +13,13 @@ from netops_core.monitor import (
     STATE_MANIFEST_NAME,
     STATE_MARKER_CONTENT,
     STATE_MARKER_NAME,
-    STATE_MARKER_REMOVED_CONTENT,
     _acquire_lock,
-    _command_reports_absent,
     _load_config,
     _load_state,
     _probe_failed,
     _read_regular_bytes,
     _release_lock,
     _scan_snapshot_files_by_path,
-    _scheduler_executable,
     _validate_system_scope_launcher,
     _validate_system_scope_data_paths,
     _verify_owner_manifest,
@@ -32,7 +29,6 @@ from netops_core.monitor import (
     monitor_status,
     prune_snapshots,
     remove_monitor,
-    _scheduler_is_absent,
     _systemd_quote,
 )
 from netops_core.models import DiagnosticBundle, Observation
@@ -127,6 +123,17 @@ class MonitorTests(unittest.TestCase):
                 remove_monitor(scope="user", dry_run=False)
             resolver.assert_not_called()
 
+    def test_unreleased_scheduler_implementation_is_not_shipped(self):
+        import netops_core.monitor as monitor_module
+
+        for name in (
+            "_install_monitor_unreleased",
+            "_monitor_status_unreleased",
+            "_remove_monitor_unreleased",
+            "_run_scheduler_command",
+        ):
+            self.assertFalse(hasattr(monitor_module, name), name)
+
     def test_system_scope_rejects_writable_data_directory_chain(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -173,47 +180,6 @@ class MonitorTests(unittest.TestCase):
             with self.subTest(unsafe=unsafe), self.assertRaises(ValueError):
                 _systemd_quote(unsafe)
 
-    def test_scheduler_executable_is_absolute_and_system_scope_fails_closed(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fake = Path(temporary) / "systemctl"
-            fake.write_text("#!/bin/sh\n", encoding="utf-8")
-            fake.chmod(0o755)
-            with patch("netops_core.monitor.shutil.which", return_value=str(fake)):
-                self.assertEqual(
-                    _scheduler_executable("linux", system_scope=False),
-                    str(fake.resolve()),
-                )
-                with self.assertRaisesRegex(PermissionError, "unsafe writable"):
-                    _scheduler_executable("linux", system_scope=True)
-
-    def test_nonlinux_remove_requires_verified_not_found_result(self):
-        stopped = {"available": True, "returncode": 0, "stdout": "", "stderr": ""}
-        denied = {
-            "available": True,
-            "returncode": 1,
-            "stdout": "",
-            "stderr": "permission denied",
-        }
-        for platform_name in ("macos", "windows"):
-            with self.subTest(platform=platform_name):
-                self.assertFalse(
-                    _scheduler_is_absent(platform_name, stopped, denied)
-                )
-
-    def test_localized_windows_absence_is_recognized_but_truncation_fails_closed(self):
-        missing = {
-            "available": True,
-            "returncode": 1,
-            "stdout": "",
-            "stderr": "错误: 系统找不到指定的文件。",
-            "stdout_truncated": False,
-            "stderr_truncated": False,
-        }
-        self.assertTrue(_command_reports_absent(missing))
-        self.assertFalse(
-            _command_reports_absent({**missing, "stderr_truncated": True})
-        )
-
     def test_system_scope_validates_imported_package_tree(self):
         plan = {
             "platform": "linux",
@@ -238,30 +204,18 @@ class MonitorTests(unittest.TestCase):
         package_validator.assert_called_once()
         self.assertEqual(package_validator.call_args.kwargs["label"], "Python package")
 
-    def test_monitor_status_does_not_return_raw_scheduler_output(self):
+    def test_monitor_status_does_not_query_or_return_scheduler_output(self):
         paths = {
             "config": Path("/tmp/netops-monitor.json"),
             "state": Path("/tmp/netops-state"),
             "service": Path("/tmp/netops.service"),
             "timer": Path("/tmp/netops.timer"),
         }
-        hostile = {
-            "available": True,
-            "returncode": 1,
-            "stdout": "Authorization: " + "Bearer " + "secret\x1b[31m",
-            "stderr": "host\u202ehidden",
-            "duration_ms": 1,
-            "timed_out": False,
-        }
         with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
             "netops_core.monitor._monitor_paths", return_value=paths
-        ), patch(
-            "netops_core.monitor._scheduler_executable",
-            return_value="/usr/bin/systemctl",
-        ), patch("netops_core.monitor.run_command", return_value=hostile):
+        ):
             result = monitor_status(scope="user")
         rendered = json.dumps(result, ensure_ascii=False)
-        self.assertNotIn("secret", rendered)
         self.assertNotIn("stdout", rendered)
         self.assertNotIn("stderr", rendered)
         self.assertEqual(result["integrity"], "unowned")
@@ -283,18 +237,9 @@ class MonitorTests(unittest.TestCase):
             (paths["state"] / STATE_MANIFEST_NAME).chmod(0o600)
             (paths["state"] / STATE_MARKER_NAME).chmod(0o600)
             paths["config"].write_text("tampered", encoding="utf-8")
-            scheduler = {
-                "available": True,
-                "returncode": 0,
-                "stdout": "active",
-                "stderr": "",
-            }
             with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
                 "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch(
-                "netops_core.monitor._scheduler_executable",
-                return_value="/usr/bin/systemctl",
-            ), patch("netops_core.monitor.run_command", return_value=scheduler):
+            ):
                 result = monitor_status(scope="user")
             self.assertEqual(result["integrity"], "tampered")
 
@@ -366,220 +311,6 @@ class MonitorTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unexpectedly large"):
                 _load_state(state)
 
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_rejects_mutated_scheduler_command_and_unit(self):
-        with patch("netops_core.monitor.platform_id", return_value="linux"):
-            plan = build_install_plan(
-                entry_script="/opt/netops/scripts/netopsctl.py",
-                target="example.invalid",
-                port=443,
-                protocol="tcp",
-                profile="client",
-                scope="user",
-            )
-            plan["commands"] = [["systemctl", "reboot"]]
-            with self.assertRaisesRegex(ValueError, "commands were mutated"):
-                install_monitor(plan, authorized=True, dry_run=False)
-
-            plan = build_install_plan(
-                entry_script="/opt/netops/scripts/netopsctl.py",
-                target="example.invalid",
-                port=443,
-                protocol="tcp",
-                profile="client",
-                scope="user",
-            )
-            service = plan["paths"]["service"]
-            plan["files"][service] += "ExecStart=/usr/bin/false\n"
-            with self.assertRaisesRegex(ValueError, "files were mutated"):
-                install_monitor(plan, authorized=True, dry_run=False)
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_rejects_empty_or_unverifiable_scheduler_plan(self):
-        with patch("netops_core.monitor.platform_id", return_value="linux"):
-            plan = build_install_plan(
-                entry_script="/opt/netops/scripts/netopsctl.py",
-                target="example.invalid",
-                port=443,
-                protocol="tcp",
-                profile="client",
-                scope="user",
-            )
-        plan["commands"] = []
-        with patch("netops_core.monitor.platform_id", return_value="linux"), self.assertRaisesRegex(
-            ValueError, "canonical scheduler commands"
-        ):
-            install_monitor(plan, authorized=True, dry_run=False)
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_scheduler_ownership_probe_fails_closed(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            paths = {
-                "config": root / "netops" / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ):
-                plan = build_install_plan(
-                    entry_script=root / "netopsctl.py",
-                    target="example.invalid",
-                    port=443,
-                    protocol="tcp",
-                    profile="client",
-                    scope="user",
-                )
-            denied = {
-                "available": True,
-                "returncode": 1,
-                "stdout": "",
-                "stderr": "permission denied",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch(
-                "netops_core.monitor._scheduler_executable",
-                return_value="/usr/bin/systemctl",
-            ), patch("netops_core.monitor.run_command", return_value=denied):
-                with self.assertRaisesRegex(RuntimeError, "could not be verified"):
-                    install_monitor(plan, authorized=True, dry_run=False)
-            self.assertFalse(paths["config"].exists())
-            self.assertFalse(paths["service"].exists())
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows")
-    def test_install_refuses_symlinked_config_or_state_directory(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            outside = root / "outside"
-            outside.mkdir()
-            paths = {
-                "config": root / "netops" / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ):
-                plan = build_install_plan(
-                    entry_script=root / "netopsctl.py",
-                    target="example.invalid",
-                    port=443,
-                    protocol="tcp",
-                    profile="client",
-                    scope="user",
-                )
-            (root / "netops").symlink_to(outside, target_is_directory=True)
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), self.assertRaisesRegex(ValueError, "real directory"):
-                install_monitor(plan, authorized=True, dry_run=False)
-            self.assertFalse((outside / "monitor.json").exists())
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows")
-    def test_install_refuses_symlinked_state_directory(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            outside = root / "outside"
-            outside.mkdir()
-            paths = {
-                "config": root / "netops" / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ):
-                plan = build_install_plan(
-                    entry_script=root / "netopsctl.py",
-                    target="example.invalid",
-                    port=443,
-                    protocol="tcp",
-                    profile="client",
-                    scope="user",
-                )
-            paths["state"].symlink_to(outside, target_is_directory=True)
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), self.assertRaisesRegex(ValueError, "real directory"):
-                install_monitor(plan, authorized=True, dry_run=False)
-            self.assertEqual(list(outside.iterdir()), [])
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows")
-    def test_install_refuses_symlinked_scheduler_file(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            outside = root / "outside.service"
-            outside.write_text("unrelated", encoding="utf-8")
-            paths = {
-                "config": root / "netops" / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ):
-                plan = build_install_plan(
-                    entry_script=root / "netopsctl.py",
-                    target="example.invalid",
-                    port=443,
-                    protocol="tcp",
-                    profile="client",
-                    scope="user",
-                )
-            paths["service"].symlink_to(outside)
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), self.assertRaisesRegex(ValueError, "regular file"):
-                install_monitor(plan, authorized=True, dry_run=False)
-            self.assertEqual(outside.read_text(encoding="utf-8"), "unrelated")
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_system_scope_rejects_user_writable_launcher_chain(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            entry = root / "netopsctl.py"
-            entry.write_text("print('unsafe')\n", encoding="utf-8")
-            paths = {
-                "config": root / "netops" / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ):
-                plan = build_install_plan(
-                    entry_script=entry,
-                    target="example.invalid",
-                    port=443,
-                    protocol="tcp",
-                    profile="server",
-                    scope="system",
-                )
-            absent = {
-                "available": True,
-                "returncode": 1,
-                "stdout": "",
-                "stderr": "not found",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch("netops_core.monitor.os.geteuid", return_value=0), patch(
-                "netops_core.monitor.run_command", return_value=absent
-            ) as runner, self.assertRaisesRegex(
-                PermissionError, "root-owned|unsafe|regular file"
-            ):
-                install_monitor(plan, authorized=True, dry_run=False)
-            runner.assert_not_called()
     def test_dns_success_does_not_hide_tcp_failure(self):
         bundle = DiagnosticBundle(mode="node", vantage_points=["test"])
         bundle.observations.extend(
@@ -942,171 +673,6 @@ class MonitorTests(unittest.TestCase):
             ), self.assertRaisesRegex(ValueError, "real directory"):
                 prune_snapshots(state, retention_days=1, max_bytes=1_048_576)
             self.assertEqual(victim.read_text(encoding="utf-8"), "keep")
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_remove_monitor_keeps_files_when_scheduler_is_still_active(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            paths = {
-                "config": root / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            for key in ("config", "service", "timer"):
-                paths[key].write_text("sentinel", encoding="utf-8")
-            mark_monitor_owned(paths)
-            stop_failure = {
-                "available": True,
-                "returncode": 1,
-                "stdout": "",
-                "stderr": "permission denied",
-            }
-            still_active = {
-                "available": True,
-                "returncode": 0,
-                "stdout": "active\n",
-                "stderr": "",
-            }
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch("netops_core.monitor.os.geteuid", return_value=0), patch(
-                "netops_core.monitor._scheduler_executable",
-                return_value="/usr/bin/systemctl",
-            ), patch(
-                "netops_core.monitor.run_command",
-                side_effect=[stop_failure, still_active],
-            ):
-                result = remove_monitor(
-                    scope="system", authorized=True, dry_run=False
-                )
-            self.assertEqual(result["status"], "blocked")
-            self.assertEqual(result["removed_files"], [])
-            for key in ("config", "service", "timer"):
-                self.assertTrue(paths[key].exists())
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_remove_monitor_deletes_files_only_after_inactive_confirmation(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            paths = {
-                "config": root / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            for key in ("config", "service", "timer"):
-                paths[key].write_text("sentinel", encoding="utf-8")
-            mark_monitor_owned(paths)
-            stopped = {
-                "available": True,
-                "returncode": 0,
-                "stdout": "",
-                "stderr": "",
-            }
-            inactive = {
-                "available": True,
-                "returncode": 3,
-                "stdout": "inactive\n",
-                "stderr": "",
-            }
-            reloaded = dict(stopped)
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch("netops_core.monitor.os.geteuid", return_value=0), patch(
-                "netops_core.monitor._scheduler_executable",
-                return_value="/usr/bin/systemctl",
-            ), patch(
-                "netops_core.monitor.run_command",
-                side_effect=[stopped, stopped, inactive, inactive, reloaded],
-            ):
-                result = remove_monitor(
-                    scope="system", authorized=True, dry_run=False
-                )
-            self.assertEqual(result["status"], "removed")
-            for key in ("config", "service", "timer"):
-                self.assertFalse(paths[key].exists())
-            self.assertEqual(
-                (paths["state"] / STATE_MARKER_NAME).read_text(encoding="utf-8"),
-                STATE_MARKER_REMOVED_CONTENT,
-            )
-            self.assertFalse((paths["state"] / STATE_MANIFEST_NAME).exists())
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_remove_refuses_tampered_owned_file_before_scheduler_commands(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            paths = {
-                "config": root / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            for key in ("config", "service", "timer"):
-                paths[key].write_text("owned", encoding="utf-8")
-            mark_monitor_owned(paths)
-            paths["config"].write_text("replaced", encoding="utf-8")
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch("netops_core.monitor.run_command") as runner:
-                result = remove_monitor(scope="user", authorized=True, dry_run=False)
-            self.assertEqual(result["status"], "blocked")
-            self.assertEqual(
-                result["reason"], "monitor-owned-files-modified-or-unverified"
-            )
-            runner.assert_not_called()
-            self.assertEqual(paths["config"].read_text(encoding="utf-8"), "replaced")
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_removed_marker_does_not_authorize_later_same_name_file(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            state = root / "state"
-            state.mkdir()
-            (state / STATE_MARKER_NAME).write_text(
-                STATE_MARKER_REMOVED_CONTENT,
-                encoding="utf-8",
-            )
-            paths = {
-                "config": root / "monitor.json",
-                "state": state,
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            paths["config"].write_text("unrelated", encoding="utf-8")
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch("netops_core.monitor.run_command") as runner:
-                result = remove_monitor(scope="user", authorized=True, dry_run=False)
-            self.assertEqual(result["status"], "blocked")
-            self.assertEqual(result["reason"], "removed-monitor-paths-were-reused")
-            runner.assert_not_called()
-            self.assertEqual(paths["config"].read_text(encoding="utf-8"), "unrelated")
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_remove_monitor_refuses_unowned_scheduler_and_files(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            paths = {
-                "config": root / "monitor.json",
-                "state": root / "state",
-                "service": root / "netops-monitor.service",
-                "timer": root / "netops-monitor.timer",
-            }
-            for key in ("config", "service", "timer"):
-                paths[key].write_text("unrelated", encoding="utf-8")
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch("netops_core.monitor.run_command") as runner:
-                result = remove_monitor(
-                    scope="user", authorized=True, dry_run=False
-                )
-            self.assertEqual(result["status"], "blocked")
-            self.assertEqual(result["reason"], "monitor-ownership-unverified")
-            runner.assert_not_called()
-            for key in ("config", "service", "timer"):
-                self.assertEqual(paths[key].read_text(), "unrelated")
-
 
 if __name__ == "__main__":
     unittest.main()

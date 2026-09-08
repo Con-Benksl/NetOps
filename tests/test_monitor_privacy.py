@@ -15,36 +15,10 @@ from netops_core.monitor import (
     DEFAULTS,
     STATE_MANIFEST_NAME,
     STATE_MARKER_CONTENT,
-    STATE_MARKER_INSTALLING_CONTENT,
     STATE_MARKER_NAME,
-    _run_scheduler_command,
     _save_snapshot,
-    build_install_plan,
-    install_monitor,
     run_sample,
 )
-
-
-def canonical_linux_plan(root: Path) -> tuple[dict, dict[str, Path]]:
-    paths = {
-        "config": root / "netops" / "monitor.json",
-        "state": root / "state",
-        "service": root / "netops-monitor.service",
-        "timer": root / "netops-monitor.timer",
-    }
-    with (
-        patch("netops_core.monitor.platform_id", return_value="linux"),
-        patch("netops_core.monitor._monitor_paths", return_value=paths),
-    ):
-        plan = build_install_plan(
-            entry_script=root / "netopsctl.py",
-            target="example.test",
-            port=443,
-            protocol="tcp",
-            profile="client",
-            scope="user",
-        )
-    return plan, paths
 
 
 def mark_monitor_owned(paths: dict[str, Path]) -> None:
@@ -80,65 +54,6 @@ def activate_monitor_config(paths: dict[str, Path], config: dict) -> None:
 
 
 class MonitorPrivacyTests(unittest.TestCase):
-    def test_scheduler_command_sink_is_unconditionally_unreleased(self):
-        with patch("netops_core.monitor.run_command") as run:
-            with self.assertRaisesRegex(RuntimeError, "unavailable in this release"):
-                _run_scheduler_command(
-                    ["systemctl", "disable", "--now", "netops-monitor.timer"],
-                    timeout=1,
-                )
-        run.assert_not_called()
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_resumes_after_scheduler_failure_before_active_marker(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plan, paths = canonical_linux_plan(root)
-            absent = {
-                "available": True,
-                "returncode": 1,
-                "stdout": "",
-                "stderr": "not found",
-            }
-            success = {**absent, "returncode": 0, "stderr": ""}
-            failure = {**absent, "stderr": "permission denied"}
-            common = (
-                patch("netops_core.monitor.platform_id", return_value="linux"),
-                patch("netops_core.monitor._monitor_paths", return_value=paths),
-                patch(
-                    "netops_core.monitor._scheduler_executable",
-                    return_value="/usr/bin/systemctl",
-                ),
-            )
-            with common[0], common[1], common[2], patch(
-                "netops_core.monitor.run_command",
-                side_effect=[absent, success, failure],
-            ), self.assertRaisesRegex(RuntimeError, "scheduler command failed"):
-                install_monitor(plan, authorized=True, dry_run=False)
-
-            marker = paths["state"] / STATE_MARKER_NAME
-            self.assertEqual(
-                marker.read_text(encoding="utf-8"),
-                STATE_MARKER_INSTALLING_CONTENT,
-            )
-
-            with patch("netops_core.monitor.platform_id", return_value="linux"), patch(
-                "netops_core.monitor._monitor_paths", return_value=paths
-            ), patch(
-                "netops_core.monitor._scheduler_executable",
-                return_value="/usr/bin/systemctl",
-            ), patch(
-                "netops_core.monitor.run_command",
-                side_effect=[success, success],
-            ):
-                result = install_monitor(plan, authorized=True, dry_run=False)
-
-            self.assertTrue(result["changed"])
-            self.assertEqual(
-                marker.read_text(encoding="utf-8"),
-                STATE_MARKER_CONTENT,
-            )
-
     def test_snapshot_persists_only_anonymous_summary(self):
         bundle = DiagnosticBundle(
             mode="monitor-full",
@@ -239,112 +154,6 @@ class MonitorPrivacyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _save_snapshot(state, bundle, "light")
             self.assertFalse((Path(temporary) / "outside").exists())
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_uses_private_config_and_state_permissions(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plan, paths = canonical_linux_plan(root)
-            config = paths["config"]
-            state = paths["state"]
-            absent_scheduler = {
-                "available": True,
-                "returncode": 1,
-                "stdout": "",
-                "stderr": "not found",
-            }
-            with (
-                patch("netops_core.monitor.platform_id", return_value="linux"),
-                patch("netops_core.monitor._monitor_paths", return_value=paths),
-                patch(
-                    "netops_core.monitor._scheduler_executable",
-                    return_value="/usr/bin/systemctl",
-                ) as scheduler_resolver,
-                patch(
-                    "netops_core.monitor.run_command",
-                    side_effect=[
-                        absent_scheduler,
-                        {**absent_scheduler, "returncode": 0, "stderr": ""},
-                        {**absent_scheduler, "returncode": 0, "stderr": ""},
-                    ],
-                ) as scheduler_runner,
-            ):
-                result = install_monitor(plan, authorized=True, dry_run=False)
-            scheduler_resolver.assert_called_once_with(
-                "linux",
-                system_scope=False,
-            )
-            self.assertTrue(scheduler_runner.call_args_list)
-            self.assertTrue(
-                all(
-                    call.args[0][0] == "/usr/bin/systemctl"
-                    for call in scheduler_runner.call_args_list
-                )
-            )
-            config_mode = stat.S_IMODE(config.stat().st_mode)
-            config_dir_mode = stat.S_IMODE(config.parent.stat().st_mode)
-            state_mode = stat.S_IMODE(state.stat().st_mode)
-
-        self.assertTrue(result["changed"])
-        if os.name != "nt":
-            self.assertEqual(config_mode, 0o600)
-            self.assertEqual(config_dir_mode, 0o700)
-            self.assertEqual(state_mode, 0o700)
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_refuses_nonempty_unmarked_state_directory(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plan, paths = canonical_linux_plan(root)
-            state = paths["state"]
-            state.mkdir()
-            (state / "unrelated.txt").write_text("keep", encoding="utf-8")
-            with (
-                patch("netops_core.monitor.platform_id", return_value="linux"),
-                patch("netops_core.monitor._monitor_paths", return_value=paths),
-                self.assertRaisesRegex(ValueError, "non-empty unmarked"),
-            ):
-                install_monitor(plan, authorized=True, dry_run=False)
-            self.assertEqual((state / "unrelated.txt").read_text(), "keep")
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_refuses_mutated_paths_and_unowned_scheduler_file(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            base, paths = canonical_linux_plan(root)
-            service = paths["service"]
-            mutated = {**base, "paths": {**base["paths"], "config": str(root / "other")}}
-            with (
-                patch("netops_core.monitor.platform_id", return_value="linux"),
-                patch("netops_core.monitor._monitor_paths", return_value=paths),
-                self.assertRaisesRegex(ValueError, "paths do not match"),
-            ):
-                install_monitor(mutated, authorized=True, dry_run=False)
-
-            service.write_text("unrelated", encoding="utf-8")
-            with (
-                patch("netops_core.monitor.platform_id", return_value="linux"),
-                patch("netops_core.monitor._monitor_paths", return_value=paths),
-                self.assertRaisesRegex(FileExistsError, "unowned"),
-            ):
-                install_monitor(base, authorized=True, dry_run=False)
-            self.assertEqual(service.read_text(encoding="utf-8"), "unrelated")
-
-    @unittest.skip("scheduled monitor mutation intentionally unreleased")
-    def test_install_refuses_unowned_existing_config(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plan, paths = canonical_linux_plan(root)
-            config = paths["config"]
-            config.parent.mkdir()
-            config.write_text("unrelated", encoding="utf-8")
-            with (
-                patch("netops_core.monitor.platform_id", return_value="linux"),
-                patch("netops_core.monitor._monitor_paths", return_value=paths),
-                self.assertRaisesRegex(FileExistsError, "unowned"),
-            ):
-                install_monitor(plan, authorized=True, dry_run=False)
-            self.assertEqual(config.read_text(encoding="utf-8"), "unrelated")
 
     def test_monitor_sample_exception_is_redacted_before_scheduler_output(self):
         private_target = "private-target.example"

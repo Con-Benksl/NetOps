@@ -261,7 +261,7 @@ class SkillContractTests(unittest.TestCase):
         case_files = sorted(
             path for path in cases_root.glob("*.md") if path.name != "README.md"
         )
-        self.assertGreaterEqual(len(case_files), 4)
+        self.assertGreaterEqual(len(case_files), 3)
         required_sections = (
             "## 参数化环境",
             "## 用户看到的现象",
@@ -594,7 +594,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("formal scan writes machine readable JSON by default", agents)
         self.assertIn("current conversation", agents)
         self.assertIn("explicitly requests or exports one", agents)
-        self.assertIn("Ordinary questions and configuration advice create", contributing)
+        self.assertIn("[AGENTS.md](AGENTS.md) owns the normative project rules", contributing)
         self.assertIn("bundle inspect client.json --report-output client-review.md", english)
         self.assertIn("bundle inspect client.json --report-output client-review.md", chinese)
         self.assertNotIn("Two files land", english)
@@ -627,7 +627,6 @@ class SkillContractTests(unittest.TestCase):
             "intermittent-shared-node.md",
             "dual-stack-tun.md",
             "destination-refusal.md",
-            "per-node-egress.md",
         ):
             self.assertIn(name, cases)
 

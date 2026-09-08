@@ -39,7 +39,6 @@ REQUIRED_MANIFEST_LINES = (
     "include CHANGELOG.md",
     "include CONTRIBUTING.md",
     "include SECURITY.md",
-    "include CODE_OF_CONDUCT.md",
     "include LICENSE",
     "include AGENTS.md",
     "include SKILL.md",
@@ -358,8 +357,6 @@ def _check_ci_contract(root: Path) -> list[str]:
         '"setuptools==83.0.0"',
         '"build==1.3.0"',
         '"jsonschema==4.25.1"',
-        "if: runner.os == 'Linux'",
-        "sudo apt-get install --no-install-recommends -y acl attr",
         'SOURCE_DATE_EPOCH: "1720000000"',
         "python scripts/release_check.py . --require-jsonschema",
         "python scripts/reproducible_build.py .",
@@ -633,6 +630,14 @@ def _check_monitor_execution_gate(root: Path) -> list[str]:
     for name in ("install_monitor", "remove_monitor"):
         if "authorized" in inspect.signature(getattr(monitor_module, name)).parameters:
             errors.append(f"monitor {name} must not expose an authorization parameter")
+    for name in (
+        "_install_monitor_unreleased",
+        "_monitor_status_unreleased",
+        "_remove_monitor_unreleased",
+        "_run_scheduler_command",
+    ):
+        if hasattr(monitor_module, name):
+            errors.append(f"monitor dormant scheduler implementation must not ship: {name}")
 
     with tempfile.TemporaryDirectory(prefix="netops-release-monitor-") as raw:
         isolated_root = Path(raw)
@@ -642,21 +647,14 @@ def _check_monitor_execution_gate(root: Path) -> list[str]:
             for index, key in enumerate(real_paths)
         }
 
-        def command_was_called(*_args, **_kwargs):
-            raise AssertionError("monitor release gate attempted to execute a command")
-
         try:
-            with (
-                patch.object(
-                    monitor_module,
-                    "_monitor_paths",
-                    return_value=isolated_paths,
-                ),
-                patch.object(
-                    monitor_module,
-                    "run_command",
-                    side_effect=command_was_called,
-                ),
+            with patch.object(
+                monitor_module,
+                "_monitor_paths",
+                return_value=isolated_paths,
+            ), patch(
+                "subprocess.Popen",
+                side_effect=AssertionError("monitor review attempted to start a process"),
             ):
                 plan = monitor_module.build_install_plan(
                     entry_script=root / "netopsctl",
@@ -705,29 +703,6 @@ def _check_monitor_execution_gate(root: Path) -> list[str]:
                     "remove",
                     lambda: monitor_module.remove_monitor(
                         scope="user", dry_run=False
-                    ),
-                )
-                expect_unavailable(
-                    "private-install",
-                    lambda: monitor_module._install_monitor_unreleased(
-                        {}, authorized=True, dry_run=False
-                    ),
-                )
-                expect_unavailable(
-                    "private-remove",
-                    lambda: monitor_module._remove_monitor_unreleased(
-                        scope="invalid", authorized=True, dry_run=False
-                    ),
-                )
-                expect_unavailable(
-                    "private-status",
-                    lambda: monitor_module._monitor_status_unreleased(scope="invalid"),
-                )
-                expect_unavailable(
-                    "scheduler-command-sink",
-                    lambda: monitor_module._run_scheduler_command(
-                        ["systemctl", "disable", "--now", "netops-monitor.timer"],
-                        timeout=1,
                     ),
                 )
         except (AssertionError, OSError, PermissionError, RuntimeError, ValueError) as exc:

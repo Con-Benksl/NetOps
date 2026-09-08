@@ -467,28 +467,13 @@ class DiagnosticBundle:
     def from_dict(cls, data: dict[str, Any]) -> "DiagnosticBundle":
         validate_bundle_data(data)
         observations = [Observation(**item) for item in data.get("observations", [])]
-        accepted = {
-            "mode",
-            "vantage_points",
-            "environment",
-            "path_segments",
-            "findings",
-            "limitations",
-            "redactions",
-            "targets",
-            "started_at",
-            "completed_at",
-            "run_id",
-            "schema_version",
-        }
-        kwargs = {key: value for key, value in data.items() if key in accepted}
+        kwargs = dict(data)
         kwargs["observations"] = observations
         return cls(**kwargs)
 
 
 def load_bundle(path: str | Path) -> DiagnosticBundle:
     data = load_json_limited(path, max_bytes=32 * 1_048_576)
-    validate_bundle_data(data)
     return DiagnosticBundle.from_dict(data)
 
 
@@ -541,7 +526,6 @@ def write_bundle(path: str | Path, bundle: DiagnosticBundle) -> Path:
     data["redactions"] = sorted(
         set(data.get("redactions", [])) | redactor.actions
     )
-    validate_bundle_data(data)
     sanitized = DiagnosticBundle.from_dict(data)
     # ``write_bundle`` already finalizes the caller's object. Keep that object in
     # sync with the persisted representation so a report rendered immediately

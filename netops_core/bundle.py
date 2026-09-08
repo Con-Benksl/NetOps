@@ -17,7 +17,7 @@ from typing import Any, BinaryIO
 from urllib.parse import unquote, unquote_plus, urlsplit
 
 from . import BUNDLE_SCHEMA_VERSION
-from .models import DiagnosticBundle, load_bundle, utc_now, validate_bundle_data
+from .models import DiagnosticBundle, load_bundle, utc_now
 from .redaction import PUBLIC_VANTAGE_POINTS, Redactor
 from .report import render_report
 from .util import open_regular_binary, parse_json_strict
@@ -1062,7 +1062,6 @@ def inspect_bundle(path: str | Path) -> tuple[DiagnosticBundle, str]:
             ):
                 raise ValueError("diagnostic bundle changed while being inspected")
             bundle_data = parse_json_strict(payload)
-            validate_bundle_data(bundle_data)
             bundle = DiagnosticBundle.from_dict(bundle_data)
             _validate_no_residual_credentials(bundle.to_dict())
             return bundle, render_report(bundle)
@@ -1112,7 +1111,6 @@ def inspect_bundle(path: str | Path) -> tuple[DiagnosticBundle, str]:
             != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
         ):
             raise ValueError("diagnostic archive changed while being inspected")
-    validate_bundle_data(bundle_data)
     bundle = DiagnosticBundle.from_dict(bundle_data)
     _validate_no_residual_credentials(bundle.to_dict())
     if not manifest["network_identifiers_included"]:

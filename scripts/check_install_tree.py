@@ -567,17 +567,6 @@ def _check_flat_copies_from_manifest(
     return findings
 
 
-def _check_flat_copies(
-    root: Path,
-    install_root: Path,
-    tracked_files: set[str] | None = None,
-) -> list[str]:
-    """Compatibility entry point for checking only the flat Skill copies."""
-
-    managed, findings = _managed_source_files(root, tracked_files)
-    if findings:
-        return findings
-    return _check_flat_copies_from_manifest(root, install_root, managed)
 
 
 def _check_installed_copies(

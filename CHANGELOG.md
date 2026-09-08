@@ -14,6 +14,13 @@ this work is reconciled with the published repository.
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the unreachable scheduled monitor mutation implementation and its
+  permanently skipped tests while retaining public dry run, status and sampling.
+- Remove unused helpers, an unconfigured conduct template, a speculative duplicate
+  case, and repeated contributor and publisher documentation.
+
 ## [0.6.0] - 2026-08-30
 
 This release separates conversational findings from persisted scan evidence,

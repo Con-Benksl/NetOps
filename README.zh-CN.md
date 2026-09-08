@@ -107,8 +107,6 @@ python3 scripts/netopsctl.py --help
 
 这里同样要求 `v0.6.0` 标签真实存在；标签缺失时应停止，不要改用 `main` 或浮动版本。
 
-`0.3.0` 将变更 spec/plan 合同升级为 `schema_version: "3.0"`，并开放受控远程执行：计划、控制通道门禁、精确文件备份、自动回滚和回执保持绑定。`0.2.0` 的 `2.0` 变更计划会被明确拒绝，必须重新审计和生成。fleet 与诊断包公共合同仍为 `2.0`；监控本地配置/所有权清单以及支持包容器各自的内部 `1.0` 格式不受这次变更影响。
-
 扫描当前电脑：
 
 ```bash
@@ -311,26 +309,9 @@ python3 scripts/check_install_tree.py .
 python3 scripts/release_check.py .
 ```
 
-发布提交已经带有准确的 `v<版本号>` 标签后，必须先在干净工作树运行 Git 与 Changelog 发布门禁，不能先在仓库内创建 `release-dist/`：
-
-```bash
-python3 -m pip install "jsonschema==4.25.1"
-python3 scripts/release_check.py . --require-jsonschema --release-mode
-```
-
-只有这项门禁通过后，发布制品才进入双构建门禁。安装项目固定的构建工具，再传入明确的 Unix 时间戳和一个尚不存在的输出目录：
-
-```bash
-python3 -m pip install "build==1.3.0" "setuptools==83.0.0"
-python3 scripts/reproducible_build.py . --source-date-epoch 1720000000 --output-dir release-dist
-python3 scripts/package_smoke.py . --dist-dir release-dist
-```
-
-`1720000000` 是 CI 使用的稳定参考值；正式标签发布时应改用标签提交的 committer timestamp，并在发布记录中保存该值。脚本会从同一份净化快照复制两个构建目录，强制核对工具版本，要求两个 wheel 原始字节一致，并在清除 sdist 的 gzip 文件名、构建时间、PAX 时间及本机用户/组信息后要求两个规范化 sdist 的字节一致。只有两项检查都通过，才会创建输出目录；已有文件、目录或符号链接都会被拒绝，脚本不会覆盖它们。随后 `package_smoke.py` 会从最终规范化的 sdist 运行完整测试，并分别安装 wheel 和 sdist 做任意目录烟测。
-
-这个门禁证明的是同一源码快照在同一受控 Python、setuptools、build 和运行环境中的可复现性。它不宣称不同操作系统、不同 GitHub runner 镜像、不同 Python 补丁版本或不同 zlib 版本之间必然得到相同字节；需要长期重建时，还应记录这些版本和最终 SHA-256，或固定发布容器摘要。
-
-CI 覆盖 Python 3.10 到 3.14：每个小版本至少在 Linux 运行，3.10、3.12、3.14 还覆盖 macOS 和 Windows；每个环境都会运行双构建门禁，并从最终规范化制品安装后执行任意目录烟测。平台专属命令使用夹具和命令生成测试验证，不会在 CI 中连接真实 VPS 或修改调度器。
+仅供发布者使用的 Git、Changelog 和可复现制品流程统一维护在
+[CONTRIBUTING.md](CONTRIBUTING.md#the-gate-to-run-before-opening-a-pull-request)，
+不在用户指南中重复。
 
 ## 版本记录
 

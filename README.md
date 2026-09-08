@@ -306,26 +306,9 @@ The suite covers the scanner, redaction, fleet and change contracts, the control
 channel gate, monitor privacy, serialisation safety, release integrity, and
 reproducible builds.
 
-After the clean release commit has its exact `v<version>` tag, run the publication-only Git and Changelog gate before creating `release-dist/` or any other in-repository artefact directory:
-
-```bash
-python3 -m pip install "jsonschema==4.25.1"
-python3 scripts/release_check.py . --require-jsonschema --release-mode
-```
-
-Only after that gate passes do release artefacts clear the double build gate. Install the pinned build tooling, then pass an explicit Unix timestamp and an output directory that does not yet exist:
-
-```bash
-python3 -m pip install "build==1.3.0" "setuptools==83.0.0"
-python3 scripts/reproducible_build.py . --source-date-epoch 1720000000 --output-dir release-dist
-python3 scripts/package_smoke.py . --dist-dir release-dist
-```
-
-`1720000000` is the stable reference value CI uses; a tagged release should switch to the committer timestamp of the tag commit and record that value in the release notes. The script copies two build directories from one sanitised snapshot, enforces the tool versions, requires the two wheels to be byte identical, and requires the two sdists to be byte identical after normalising away the gzip filename, build time, PAX timestamps, and local user and group information. Only when both checks pass is the output directory created; an existing file, directory, or symlink is rejected rather than overwritten. `package_smoke.py` then runs the full test suite from the final normalised sdist and installs the wheel and the sdist separately for an arbitrary directory smoke test.
-
-Be clear about what that proves: reproducibility of one source snapshot under one controlled Python, setuptools, build, and runtime environment. It does not claim identical bytes across operating systems, GitHub runner images, Python patch releases, or zlib versions. For long term rebuilds, record those versions and the final SHA-256, or pin a release container digest.
-
-CI covers Python 3.10 to 3.14 across 11 environments. Every minor version runs on Linux; 3.10, 3.12, and 3.14 also run on macOS and Windows. Every environment runs the double build gate and the arbitrary directory smoke test from the final normalised artefacts. Platform specific commands are verified with fixtures and command generation tests, so CI never connects to a real VPS or touches a scheduler.
+Publisher only Git, Changelog and reproducible artefact procedures live in
+[CONTRIBUTING.md](CONTRIBUTING.md#the-gate-to-run-before-opening-a-pull-request).
+They are intentionally kept out of this user guide.
 
 ## Version history
 

@@ -28,7 +28,6 @@ REQUIRED_SDIST_FILES = (
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
-    "CODE_OF_CONDUCT.md",
     "LICENSE",
     "AGENTS.md",
     "SKILL.md",
