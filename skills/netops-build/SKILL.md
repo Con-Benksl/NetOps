@@ -23,7 +23,7 @@ Follow `<reference-root>/guided-dialogue.md`. A clear audit-only, plan-only, or 
 
 1. Audit the live target and define the exact delta, affected components, invariants, and actual ingress/egress identities.
 2. Apply `<reference-root>/control-channel-safety.md` and the evidence ladder in `<reference-root>/independence-protocol.md`.
-3. Use `<reference-root>/guided-dialogue.md` for execution confirmation and `<reference-root>/control-channel-safety.md` for the execution mode and transaction lifecycle; those references own the complete contracts.
+3. Use `<reference-root>/guided-dialogue.md` for authorization scope and reuse and `<reference-root>/control-channel-safety.md` for the execution mode and transaction lifecycle; those references own the complete contracts.
 4. If control has already been lost, stop the change and use `<reference-root>/emergency-recovery.md`.
 
 ## Architecture Defaults

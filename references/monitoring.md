@@ -5,7 +5,7 @@
 - `monitor install --dry-run` 只生成不可执行的调度审查材料；非 dry-run 无条件拒绝。
 - `monitor remove --dry-run` 只生成移除审查材料。未通过本地文件所有权与完整性核对时，不输出可复制的调度命令；即使通过，也明确标记命令不可执行。
 - `monitor status` 只检查规范路径下已有文件、权限、生命周期标记和 SHA-256 清单，不调用 systemd、launchd 或 Task Scheduler，也不证明真实任务存在、身份匹配或正在运行。
-- 仓库不包含可调用的调度器执行器。`--authorized`、环境变量、隐藏参数或私有函数都不能启用生命周期执行。
+- 本版本不提供可执行的调度器生命周期入口。`--authorized`、环境变量、隐藏参数或私有函数都不能启用生命周期执行。
 
 安装 dry-run 为了让审核者核对目标，会在 `plan.config.target.host` 和配置文件草案中显示目标。因此 stdout 不是脱敏支持包，不应复制到工单、聊天或公开仓库。系统级 Linux 计划还会只读核对解释器、入口和目录信任链；不满足 root 控制条件时标为 `blocked`，不得复制其中命令。
 
@@ -25,4 +25,4 @@
 
 ## 尚未发布的调度器设计
 
-审查材料描述 Linux systemd service/timer、macOS per-user LaunchAgent 和 Windows Task Scheduler，但本版本不安装、查询、停止或删除它们。未来只有在调度器身份绑定、drop-in/同名任务所有权、崩溃恢复和跨平台实机验证完成后，才应重新实现生命周期执行。
+审查材料描述 Linux systemd service/timer、macOS per-user LaunchAgent 和 Windows Task Scheduler，但本版本不安装、查询、停止或删除它们。未来只有在调度器身份绑定、drop-in/同名任务所有权、崩溃恢复和跨平台实机验证完成后，才能发布生命周期执行。

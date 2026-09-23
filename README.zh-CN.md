@@ -136,7 +136,7 @@ python3 scripts/netopsctl.py safety assess \
 
 输出中的 `guard.decision` 只有 `allow` 和 `warn` 两种取值，本版本不再返回 `block`。`can_apply` 为 `true` 表示控制通道审核已经允许进入执行确认，仍不等于用户授权；`can_apply` 为 `false` 时看 `acknowledgment_required` 与 `can_apply_with_acknowledgment`：后者为 `true` 说明用户在看过风险卡后明确接受残余风险即可继续。`execution_mode` 会明确区分 `direct-ssh-or-plan`、`exact-plan`、`manual-local-control-plane` 和 `read-only`；`execution_available: true` 只说明精确计划执行器已发布。`manual-local-control-plane` 是知情同意也无法交给远端执行器的一类，本机控制面切换仍由用户完成。`change apply` 必须同时提供 `--authorized`、完整的 `--confirm-plan-id` 和 15 分钟内的 `--current-control-channel`；它会重新检查计划时效、主机信息、备份覆盖和门禁结果。只写“可以手动恢复”不能绕过共享路径条件。
 
-审核 spec 后先生成计划；向用户展示计划 ID 和影响卡并获得明确授权，再执行同一个计划：
+审核 spec 后先生成计划；记录完整计划 ID 与影响摘要，按 [`references/guided-dialogue.md`](references/guided-dialogue.md) 承接已有准确授权；只有超出原范围或缺少必要授权时才补问，再执行同一个计划：
 
 ```bash
 netopsctl change plan --spec change-spec.json --fleet fleet.json --output change-plan.json

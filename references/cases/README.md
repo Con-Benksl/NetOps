@@ -20,3 +20,4 @@
 - [`intermittent-shared-node.md`](intermittent-shared-node.md)：对照多设备间歇性故障的共享环节。
 - [`dual-stack-tun.md`](dual-stack-tun.md)：隔离 IPv4、IPv6 与 TUN 路径差异。
 - [`destination-refusal.md`](destination-refusal.md)：区分路径故障与目标站拒绝。
+- [`per-node-egress.md`](per-node-egress.md)：区分节点专属上游出口与本机附加地址，保留旧节点及默认路由。

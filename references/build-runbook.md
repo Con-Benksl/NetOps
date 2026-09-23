@@ -4,7 +4,7 @@
 
 - 控制通道依赖、`allow`/`warn` 判定、知情同意阶梯、独立远端 SSH 事务和精确计划自动回滚合同，只以 [`control-channel-safety.md`](control-channel-safety.md) 为准。
 - 目标是否脱离当前 Agent 路径，只按 [`independence-protocol.md`](independence-protocol.md) 的证据阶梯判定。
-- 唯一最终执行卡、执行卡 ID、三个授权选择和范围变化后的授权失效，只以 [`guided-dialogue.md`](guided-dialogue.md) 为准。
+- 准确授权的承接、必要提问与范围变化，只以 [`guided-dialogue.md`](guided-dialogue.md) 为准。
 
 本手册不再定义上述门禁或执行合同；下文只补充搭建与配置审计所需的领域细节。
 

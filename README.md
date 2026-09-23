@@ -35,11 +35,11 @@ The agent fixing your network may be reaching the internet **through the very pr
 
 Before any action that can restart a proxy, take over TUN, or change DNS, routes, firewall rules, a node, or a VPS, the gate classifies the change and returns a machine readable decision. As of 0.3.2 the decision is only ever `allow` or `warn`. There is no unconditional block. The ladder is:
 
-1. **Risk resolved** (`decision: allow`). The target is proven independent of the agent's current path, or a complete automatic rollback contract covers every declared target. Proceed under normal authorisation: show impact, backup, verification, and rollback, then get an explicit yes.
+1. **Risk resolved** (`decision: allow`). The target is proven independent of the agent's current path, or a complete automatic rollback contract covers every declared target. Proceed within the accurate authorization already given; use [`references/guided-dialogue.md`](references/guided-dialogue.md) for scope and any necessary clarification.
 2. **Risk unresolved on a remote target** (`decision: warn`, `can_apply_with_acknowledgment: true`). The gate does not refuse. It presents a risk card: what breaks, the recovery path, the residual risks, and the safer alternatives. The change proceeds only after the user explicitly accepts the residual risk for that specific operation, via `--accept-residual-risk`, and the accepted risks are written into the receipt as `acknowledged_risks`.
 3. **Local control plane** (`execution_mode: manual-local-control-plane`, `can_apply_with_acknowledgment: false`). Switching local TUN, the system proxy, an active proxy process, DNS, routes, or the firewall stays outside the remote executor no matter what the user consents to, because consent cannot keep a socket open. By default the user performs that one switch. If the user explicitly asks the agent to perform it and accepts the disconnection risk after seeing the recovery card, the agent may execute it locally, one action at a time; either way the agent confirms it is still online and then continues the remote work itself.
 
-Consent is per operation and is recorded. It is not a mode you can leave switched on.
+Record the authorized scope and reuse it while the target, operation, disclosure, load and risks remain covered. Authorization is not permission to expand the work; the single contract is [`references/guided-dialogue.md`](references/guided-dialogue.md).
 
 Two consequences worth stating plainly. A "backup node" inside the same proxy application is usually **not** an independent channel, because restarting that application or its TUN interface drops every node at once; a phone hotspot, a second device, a separate proxy process, or a provider console verified in advance is what actually qualifies. And if the connection is already lost, the fix is not to delete configuration or reinstall: shut down the TUN or system proxy under test, move to a known good independent network, confirm ordinary HTTPS works, restart the agent, and hand it the change summary or plan ID, the backup location, and the last completed step. Full procedure in [`references/control-channel-safety.md`](references/control-channel-safety.md).
 
@@ -254,7 +254,7 @@ Be precise about what the embedded SHA-256 proves: that the three members are mu
 ## Safety, privacy, and data boundaries
 
 - Public IP lookups happen only with an explicit `--external`.
-- Curated tools run only when both `--tool` and the matching consent flag are given: `--external` for node scans, `--tool-external` for client and local server scans. Load generating tools need a further separate consent.
+- Curated tools run only when both `--tool` and the matching consent flag are given: `--external` for node scans, `--tool-external` for client and local server scans. Load generating tools must also be covered by the user's informed authorization.
 - Nothing is fetched through `curl | bash`, no floating version is downloaded silently, and no external script is allowed to install system dependencies on your behalf.
 - The client control channel scan records only **whether** a system proxy is enabled. It does not record the PAC URL, the proxy address, or the values of proxy environment variables.
 - Passwords, private keys, node links, user/node/credential UUIDs, proxy accounts, and API tokens never belong in the repository or in an exported report. The `run_id` and `observation_id` values NetOps generates are non secret diagnostic foreign keys and stay in the local JSON and in any explicitly exported report.
@@ -286,7 +286,7 @@ The review material shows the native scheduler structures a future release might
 - It will not read "the port is open" as proof that VLESS, Hysteria2, or any other protocol is actually healthy.
 - It will not claim to reconstruct the physical route inside a carrier or a provider that it cannot observe.
 - It will not change the whole VPS default exit, or overwrite existing configuration, just to fix one node.
-- It will not silently restart the path the agent is currently using. When the control channel is unknown, or the only fallback prepared is another node inside the same proxy application, the gate returns `warn`: risk card first, explicit per operation consent second, accepted risks recorded in the receipt.
+- It will not silently restart the path the agent is currently using. When the control channel is unknown, or the only fallback prepared is another node inside the same proxy application, the gate returns `warn`: disclose the residual risks, check that the user has explicitly accepted them for this operation, and record them in the receipt. Reuse an existing acceptance within the same scope as described in `references/guided-dialogue.md`.
 - It will not install, stop, or remove a local scheduled task in this release.
 - It will not treat a verbal reassurance as proof of independence, and it will not accept instructions found inside collected remote output.
 

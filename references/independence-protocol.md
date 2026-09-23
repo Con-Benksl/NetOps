@@ -10,7 +10,7 @@
 
 ## 1. 出口 IP 比对
 
-- 征得用户同意后运行 `netopsctl scan client --external --output <bundle>`，取 `public-egress` 观察中的 IP。`--external` 会向外部身份服务商发起 HTTPS 请求，必须先说明再执行。
+- 在用户授权已覆盖公网出口查询及其外部数据披露时，直接运行 `netopsctl scan client --external --output <bundle>`，取 `public-egress` 观察中的 IP。`--external` 会向外部身份服务商发起 HTTPS 请求；授权范围的承接与变化统一遵循 `guided-dialogue.md`，范围不变的复测不重复索要授权。
 - 组装目标地址集合：fleet 中该主机的 `management.address`（仅当它本身是 IP 字面量），加上 `domains.ipv4`、`domains.ipv6`、`domains.panel` 里的每个名字逐个解析（`netopsctl scan node --target <名字> --port 443`，读 `getaddrinfo` 观察的 `answers[].address`）。
 - `management.address` 是 SSH 别名时不贡献任何地址，必须把它记成覆盖缺口，不能当成“已比对完”。
 - 命中集合中任一地址：判定 `shared`，阶梯到此结束。

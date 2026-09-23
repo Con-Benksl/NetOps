@@ -14,6 +14,24 @@ this work is reconciled with the published repository.
 
 ## [Unreleased]
 
+### Added
+
+- Add a parameterized case for a per-node upstream egress that must not change the
+  host default route or other nodes.
+
+### Changed
+
+- Make `references/guided-dialogue.md` the single contract for authorization scope
+  and reuse. Accurate existing authorization now carries over to subskills,
+  repeated reads and same-scope retests; a new confirmation is required only when
+  the target, change, disclosure, load or disclosed risk expands. The fixed
+  three-option execution card is replaced by a short audit summary, while plan ID,
+  `--authorized`, control-channel evidence and `--accept-residual-risk` bindings
+  remain enforced.
+- Document the private `fleet/` overlay as outside the public core and never part
+  of an installation payload, and describe flat satellite copies as an
+  installer-specific layout rather than a universal requirement.
+
 ### Removed
 
 - Remove the unreachable scheduled monitor mutation implementation and its

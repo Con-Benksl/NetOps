@@ -26,7 +26,7 @@ Test the path in order: client/TUN/DNS/routes -> access network -> VPS ingress/s
 ## Repair Branch
 
 1. Capture incident evidence before restarting or rewriting anything.
-2. For a proven repair, use `<reference-root>/guided-dialogue.md` for execution confirmation and `<reference-root>/control-channel-safety.md` for the execution mode and transaction lifecycle; those references own the complete contracts.
+2. For a proven repair, use `<reference-root>/guided-dialogue.md` for authorization scope and reuse and `<reference-root>/control-channel-safety.md` for the execution mode and transaction lifecycle; those references own the complete contracts.
 3. For local control-plane recovery, follow the local-action format in `<reference-root>/control-channel-safety.md`. If the Agent or all applications are already offline, stop diagnosis and use `<reference-root>/emergency-recovery.md`.
 
 ## Output

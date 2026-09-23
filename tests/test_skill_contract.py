@@ -249,9 +249,9 @@ class SkillContractTests(unittest.TestCase):
         self.assertNotIn("常见故障的处理方式", text)
 
         root = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("A remote mutation uses the final execution card", root)
+        self.assertIn("Authorization scope and reuse are defined only in `references/guided-dialogue.md`", root)
         self.assertIn(
-            "A user-performed local control-plane action uses the reference's "
+            "A user-performed local control-plane action uses the safety reference's "
             "single-step five-part format",
             root,
         )
@@ -493,29 +493,21 @@ class SkillContractTests(unittest.TestCase):
         ):
             self.assertIn(required, text)
 
-    def test_final_execution_card_binds_authorization_to_exact_scope(self):
+    def test_authorization_reuses_exact_scope_without_fixed_response(self):
         guided = (ROOT / "references/guided-dialogue.md").read_text(encoding="utf-8")
-        control = (ROOT / "references/control-channel-safety.md").read_text(
-            encoding="utf-8"
-        )
+        control = (ROOT / "references/control-channel-safety.md").read_text(encoding="utf-8")
         for required in (
-            "## 唯一最终执行卡",
-            "执行卡 ID",
-            "完整计划 ID",
-            "执行并接受本卡列出的残余风险",
-            "只保留方案",
-            "取消",
-            "原授权立即失效",
-            "生成新的执行卡 ID 并重新确认",
+            "已有明确授权覆盖准确目标", "实质扩大到既有授权之外",
+            "不能代替对最终远程操作的明确授权", "不能把沉默或超时当作同意",
+            "目标、影响、备份、验证和可执行回滚合同", "用户对这些风险的明确接受",
+            "完整计划 ID", "--confirm-plan-id", "--authorized",
+            "当前控制通道证据", "--accept-residual-risk",
         ):
             self.assertIn(required, guided)
-        self.assertLess(
-            guided.index("执行并接受本卡列出的残余风险"),
-            guided.index("只保留方案"),
-        )
-        self.assertLess(guided.index("只保留方案"), guided.index("`取消`"))
+        for obsolete in ("## 唯一最终执行卡", "卡片末尾只提供三个", "执行并接受本卡列出的残余风险"):
+            self.assertNotIn(obsolete, guided + control)
         self.assertIn("guided-dialogue.md", control)
-        self.assertIn("同一张最终执行卡", control)
+        self.assertIn("用户明确接受残余风险后才继续", control)
 
     def test_build_runbook_delegates_the_safety_contract(self):
         text = (ROOT / "references/build-runbook.md").read_text(encoding="utf-8")

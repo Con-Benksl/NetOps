@@ -29,13 +29,13 @@ fails if any declared shared reference cannot be resolved there.
 
 ### The dual copy rule
 
-Once installed, every satellite exists twice: nested under `skills/netops-*/`, and
-flat beside the root Skill. The router loads the nested copy; triggering a satellite
-directly loads the flat one. The two must stay byte identical, or the same request
-behaves differently depending on how it arrived.
+When an installer emits flat `netops-*` siblings, each must stay byte identical to
+the nested `skills/netops-*/` source. A runtime that registers the nested Skills
+directly does not need flat copies; do not create them just to satisfy this
+installer-specific layout.
 
 The nested `skills/<name>/SKILL.md` in this repository is the single source of truth.
-The installed flat copy must remain a byte identical copy of it, produced by
+Any installed flat copy must remain a byte identical copy of it, produced by
 reinstalling, never by hand editing the installed file. If you edit an installed copy,
 your change is invisible to CI, to the test suite and to every other contributor, and
 the next install silently reverts it.
@@ -76,14 +76,16 @@ python3 scripts/release_check.py . --require-jsonschema
 
 `check_install_tree.py` rejects packaging and runtime residue, because the installer
 copies the working tree verbatim and a stale `build/`, `dist/` or `*.egg-info` left in
-your checkout becomes part of what an agent reads. It also confirms that
+your checkout becomes part of what an agent reads. Never install the private
+`fleet/` overlay with a verbatim source copy; use the tracked-file payload or a clean
+checkout for installation. It also confirms that
 `netops_core.__version__` and the `pyproject.toml` version still agree. If it fails,
 delete the residue rather than adding an exclusion.
 
-If you have NetOps installed as a Skill and edited any satellite, also check the flat
-copies. They live outside the repository, so no repository scoped test can reach them,
-and the router loads the nested copy while direct triggering loads the flat one. Point
-the checker at the directory holding the installation:
+For an installation that emits flat copies, also check those external targets. The
+following checker and six-target synchronizer enforce that specific layout; they
+are not required for a runtime that registers only the nested Skills. Point the
+checker at the directory holding a flat installation:
 
 ```bash
 python3 scripts/check_install_tree.py . --install-root ~/.agents/skills

@@ -1,5 +1,7 @@
 # NetOps Contributor Rules
 
+These contribution rules govern the public NetOps core. `fleet/` is an independent private Git repository with its own `AGENTS.md`; when a parent-project task also reads it, apply the public-core restrictions to core code and the fleet rules to private asset records. Non-secret asset identifiers and credential-path references belong only in the private overlay, never in core examples or Skills. Do not copy the overlay into an installation or release payload.
+
 - Keep one root router and exactly five broad workflow Skills.
 - Put protocol details, provider behavior, sites, carriers, and individual incidents in `references/`, never in new Skills.
 - Do not hardcode a user's city, ISP, domains, IP addresses, credential paths, node links, UUIDs, or API tokens.
@@ -15,7 +17,7 @@
 
 ## Where a rule belongs
 
-Normative safety text has exactly one home. Restating it elsewhere is how the 0.2.0 wording survived into 0.3.1 and how one satellite silently lost an item from a five item format.
+Shared normative rules are defined only in the references below.
 
 | Topic | Single source |
 | --- | --- |
@@ -25,9 +27,9 @@ Normative safety text has exactly one home. Restating it elsewhere is how the 0.
 | Necessary clarification and execution confirmation | `references/guided-dialogue.md` |
 | Curated tool selection, permissions, compatibility | `references/curated-tools.md` |
 
-Two duplications are deliberate, and must be preserved rather than "cleaned up":
+Independent invocation and installer layouts have these requirements:
 
 1. Each mutating satellite (`netops-build`, `netops-fix`, `netops-manage`) carries its own `## Direct-Invocation Safety` section. A satellite can be invoked without the root router, so those rules must exist in its own context. `scripts/validate_skills.py` enforces their presence.
-2. Every satellite exists twice on disk: nested under `skills/netops-*/` and flat beside the root Skill. The router loads the nested copy; direct triggering loads the flat one. They must stay byte identical, and `scripts/validate_skills.py` checks the flat installation contract.
+2. An installer that emits flat `netops-*` siblings must keep them byte identical to the nested `skills/netops-*/` source; `scripts/validate_skills.py` checks that layout contract. Runtimes that directly register the nested Skills need no extra flat directories.
 
-Anything beyond these two should point at the single source instead of restating it.
+Other entrypoints reference these contracts without restating them.

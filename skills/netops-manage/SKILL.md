@@ -30,6 +30,6 @@ Follow `<reference-root>/guided-dialogue.md`. Infer the branch from a clear requ
 
 ## Change Boundary
 
-Before executable maintenance, use `<reference-root>/guided-dialogue.md` for execution confirmation and `<reference-root>/control-channel-safety.md` for the execution mode and transaction lifecycle; those references own the complete contracts.
+Before executable maintenance, use `<reference-root>/guided-dialogue.md` for authorization scope and reuse and `<reference-root>/control-channel-safety.md` for the execution mode and transaction lifecycle; those references own the complete contracts.
 
 Monitoring observations stay local and bounded; never capture packet payloads continuously. An independent recovery path requires a separate process, network, device, or provider console, not merely a second node in the same application.
